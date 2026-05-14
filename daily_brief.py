@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import parsedate_to_datetime
 from html import escape
 from zoneinfo import ZoneInfo
+from urllib.parse import quote_plus
 
 import feedparser
 import requests
@@ -16,156 +17,243 @@ from openai import OpenAI
 
 
 # ============================================================
-# Irene Daily Consumer & Strategy Brief
-# Version 1.4
+# Irene Daily World Strategy Brief
+# Version 2.0
 #
-# What this version does:
-# 1. Uses Melbourne date/time.
-# 2. Reads RSS with requests + browser-like headers.
-# 3. Focuses on consumer markets, China/Australia macro, and AI/TMT enablers.
-# 4. Uses OpenAI to produce structured JSON.
-# 5. Uses Python to render a stable, cleaner HTML email template.
+# Positioning:
+# - Email = world radar
+# - Notion = deep analysis workspace
+#
+# Structure:
+# 1. Macro & Policy
+# 2. Financial Services & Markets
+# 3. Consumer & Retail
+# 4. TMT & AI
+# 5. Healthcare & Life Sciences
+# 6. Energy, Industrials & Infrastructure
+# 7. Consulting & Strategy Insights
+#
+# Date logic:
+# - Report date = previous day
+# - Generated time = actual Melbourne time
 # ============================================================
 
 load_dotenv()
 
 MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
-LOOKBACK_HOURS = 36
+
+REPORT_LAG_DAYS = 1
+LOOKBACK_HOURS = 42
 MAX_PER_SOURCE = 25
-MAX_ARTICLES_FOR_AI = 45
-MIN_ARTICLES_FOR_DIGEST = 8
+MAX_ARTICLES_FOR_AI = 55
+MIN_ARTICLES_FOR_DIGEST = 10
 REQUEST_TIMEOUT = 20
 
 
 # ------------------------------------------------------------
+# Date helpers
+# ------------------------------------------------------------
+def now_melbourne() -> datetime:
+    return datetime.now(MELBOURNE_TZ)
+
+
+def get_generated_time_string() -> str:
+    return now_melbourne().strftime("%Y-%m-%d %H:%M")
+
+
+def get_report_date_string() -> str:
+    report_date = now_melbourne() - timedelta(days=REPORT_LAG_DAYS)
+    return report_date.strftime("%Y-%m-%d")
+
+
+# ------------------------------------------------------------
+# RSS helpers
+# ------------------------------------------------------------
+def google_news_rss(query: str) -> str:
+    encoded = quote_plus(query)
+    return f"https://news.google.com/rss/search?q={encoded}&hl=en-AU&gl=AU&ceid=AU:en"
+
+
+# ------------------------------------------------------------
 # RSS sources
-# You can add/remove sources here later.
 # ------------------------------------------------------------
 SOURCES = {
-    # Consumer / retail / marketing / supply chain
+    # Macro / policy / economy
+    "China NBS Latest Releases": "http://www.stats.gov.cn/english/PressRelease/rss.xml",
+    "China Daily Bizchina": "http://www.chinadaily.com.cn/rss/bizchina_rss.xml",
+    "China Daily China News": "http://www.chinadaily.com.cn/rss/china_rss.xml",
+    "RBA Media Releases": "https://www.rba.gov.au/rss/rss-cb-media-releases.xml",
+    "RBA Speeches": "https://www.rba.gov.au/rss/rss-cb-speeches.xml",
+    "RBA Statement on Monetary Policy": "https://www.rba.gov.au/rss/rss-cb-smp.xml",
+    "Google News - China Economy": google_news_rss(
+        "China economy consumption retail sales property employment inflation policy"
+    ),
+    "Google News - Australia Economy": google_news_rss(
+        "Australia economy inflation RBA employment wages household spending retail sales housing"
+    ),
+    "Google News - Global Economy": google_news_rss(
+        "global economy inflation interest rates trade growth central banks"
+    ),
+
+    # Financial services / markets
+    "CNBC Finance": "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+    "Dow Jones Markets": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+    "Google News - Financial Services": google_news_rss(
+        "banking financial services capital markets asset management insurance fintech credit lending"
+    ),
+    "Google News - Markets": google_news_rss(
+        "markets bonds equities interest rates investors banks earnings"
+    ),
+
+    # Consumer / retail
     "Retail Dive": "https://www.retaildive.com/feeds/news/",
     "Marketing Dive": "https://www.marketingdive.com/feeds/news/",
     "Supply Chain Dive": "https://www.supplychaindive.com/feeds/news/",
     "Food Dive": "https://www.fooddive.com/feeds/news/",
     "Retail TouchPoints": "https://www.retailtouchpoints.com/feed/",
+    "Google News - Consumer Retail": google_news_rss(
+        "consumer retail FMCG brands ecommerce luxury grocery pricing discount"
+    ),
+    "Google News - China Consumer": google_news_rss(
+        "China consumer retail ecommerce brands coffee tea beauty luxury"
+    ),
 
-    # China macro / business
-    "China NBS Latest Releases": "http://www.stats.gov.cn/english/PressRelease/rss.xml",
-    "China Daily Bizchina": "http://www.chinadaily.com.cn/rss/bizchina_rss.xml",
-    "China Daily China News": "http://www.chinadaily.com.cn/rss/china_rss.xml",
-
-    # Australia macro / policy
-    "RBA Media Releases": "https://www.rba.gov.au/rss/rss-cb-media-releases.xml",
-    "RBA Speeches": "https://www.rba.gov.au/rss/rss-cb-speeches.xml",
-    "RBA Statement on Monetary Policy": "https://www.rba.gov.au/rss/rss-cb-smp.xml",
-
-    # Global AI / tech enabler
+    # TMT / AI
     "OpenAI News": "https://openai.com/news/rss.xml",
     "TechCrunch AI": "https://techcrunch.com/category/artificial-intelligence/feed/",
-    "MIT Technology Review AI": "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
     "MIT Technology Review": "https://www.technologyreview.com/feed/",
-    "Hugging Face Blog": "https://huggingface.co/blog/feed.xml",
     "Google AI Blog": "https://blog.google/technology/ai/rss/",
     "Microsoft Blog": "https://blogs.microsoft.com/feed/",
     "NVIDIA Blog": "https://blogs.nvidia.com/feed/",
     "NVIDIA Newsroom": "https://nvidianews.nvidia.com/rss",
+    "Google News - TMT AI": google_news_rss(
+        "AI cloud semiconductor telecom platform data center digital transformation"
+    ),
+
+    # Healthcare / life sciences
+    "Fierce Pharma": "https://www.fiercepharma.com/rss/xml",
+    "Google News - Healthcare": google_news_rss(
+        "healthcare pharma biotech medical services life sciences hospitals drug pricing"
+    ),
+
+    # Energy / industrials / infrastructure
+    "Google News - Energy Industrials": google_news_rss(
+        "energy industrials infrastructure manufacturing mining supply chain logistics renewables"
+    ),
+    "Google News - Supply Chain": google_news_rss(
+        "supply chain logistics manufacturing industrial production shipping"
+    ),
 
     # Consulting / strategy
     "McKinsey Insights": "https://www.mckinsey.com/insights/rss.aspx",
     "BCG Insights": "https://www.bcg.com/publications/rss",
+    "Google News - Strategy Consulting": google_news_rss(
+        "corporate strategy transformation productivity profitability operating model consulting"
+    ),
 }
 
 
-HIGH_SIGNAL_SOURCES = {
-    # Consumer / retail
-    "Retail Dive",
-    "Marketing Dive",
-    "Supply Chain Dive",
-    "Food Dive",
-    "Retail TouchPoints",
+SOURCE_CATEGORY_HINTS = {
+    "China NBS Latest Releases": "Macro & Policy",
+    "China Daily Bizchina": "Macro & Policy",
+    "China Daily China News": "Macro & Policy",
+    "RBA Media Releases": "Macro & Policy",
+    "RBA Speeches": "Macro & Policy",
+    "RBA Statement on Monetary Policy": "Macro & Policy",
+    "Google News - China Economy": "Macro & Policy",
+    "Google News - Australia Economy": "Macro & Policy",
+    "Google News - Global Economy": "Macro & Policy",
 
-    # China macro / business
-    "China NBS Latest Releases",
-    "China Daily Bizchina",
-    "China Daily China News",
+    "CNBC Finance": "Financial Services & Markets",
+    "Dow Jones Markets": "Financial Services & Markets",
+    "Google News - Financial Services": "Financial Services & Markets",
+    "Google News - Markets": "Financial Services & Markets",
 
-    # Australia macro
-    "RBA Media Releases",
-    "RBA Speeches",
-    "RBA Statement on Monetary Policy",
+    "Retail Dive": "Consumer & Retail",
+    "Marketing Dive": "Consumer & Retail",
+    "Supply Chain Dive": "Consumer & Retail",
+    "Food Dive": "Consumer & Retail",
+    "Retail TouchPoints": "Consumer & Retail",
+    "Google News - Consumer Retail": "Consumer & Retail",
+    "Google News - China Consumer": "Consumer & Retail",
 
-    # AI / tech enabler
-    "OpenAI News",
-    "Google AI Blog",
-    "NVIDIA Blog",
-    "NVIDIA Newsroom",
+    "OpenAI News": "TMT & AI",
+    "TechCrunch AI": "TMT & AI",
+    "MIT Technology Review": "TMT & AI",
+    "Google AI Blog": "TMT & AI",
+    "Microsoft Blog": "TMT & AI",
+    "NVIDIA Blog": "TMT & AI",
+    "NVIDIA Newsroom": "TMT & AI",
+    "Google News - TMT AI": "TMT & AI",
 
-    # Consulting
-    "McKinsey Insights",
-    "BCG Insights",
+    "Fierce Pharma": "Healthcare & Life Sciences",
+    "Google News - Healthcare": "Healthcare & Life Sciences",
+
+    "Google News - Energy Industrials": "Energy, Industrials & Infrastructure",
+    "Google News - Supply Chain": "Energy, Industrials & Infrastructure",
+
+    "McKinsey Insights": "Consulting & Strategy Insights",
+    "BCG Insights": "Consulting & Strategy Insights",
+    "Google News - Strategy Consulting": "Consulting & Strategy Insights",
 }
 
 
-KEYWORDS = [
-    # Consumer / retail / brands
-    "consumer", "consumption", "retail", "shopping", "e-commerce", "ecommerce",
-    "brand", "brands", "fmcg", "beauty", "cosmetics", "fashion", "luxury",
-    "sportswear", "food", "beverage", "coffee", "tea", "restaurant", "grocery",
-    "supermarket", "membership", "costco", "walmart", "amazon", "nike", "adidas",
-    "lvmh", "l'oréal", "loreal", "procter", "p&g", "unilever", "nestlé",
-    "nestle", "coca-cola", "pepsico", "starbucks", "retail sales",
-
-    # China consumer / platform economy
-    "china", "chinese consumer", "消费", "零售", "社零", "社会消费品零售总额",
-    "电商", "直播电商", "内容电商", "即时零售", "抖音", "小红书", "拼多多",
-    "京东", "天猫", "淘宝", "美妆", "茶饮", "咖啡", "新消费", "出海",
-    "品牌出海", "价格战", "性价比", "平台经济", "服务消费", "居民消费",
-
-    # Macro / economic conditions
-    "macro", "macroeconomy", "economy", "economic growth", "gdp", "inflation",
-    "cpi", "ppi", "interest rate", "central bank", "rba", "unemployment",
-    "employment", "labour market", "labor market", "wage", "income", "household spending",
-    "consumer confidence", "housing", "mortgage", "credit", "exports", "imports",
-    "australia", "澳洲", "澳大利亚", "中国经济", "物价", "通胀", "就业", "工资",
-    "房地产", "出口", "进口", "货币政策", "财政政策",
-
-    # Platform / channel / supply chain
-    "platform", "channel", "omnichannel", "marketplace", "algorithm", "recommendation",
-    "creator economy", "livestream", "private traffic", "supply chain", "inventory",
-    "fulfillment", "logistics", "last mile", "warehouse", "pricing", "discount",
-    "margin", "profitability",
-
-    # AI / TMT as enabler
-    "ai", "artificial intelligence", "generative ai", "genai", "agent", "llm",
-    "automation", "data", "cloud", "digital transformation", "marketing technology",
-    "personalization", "personalisation", "customer insight", "customer analytics",
-
-    # Consulting / strategy
-    "consulting", "strategy", "growth", "productivity", "operating model",
-    "market share", "competitive advantage", "mckinsey", "bcg", "bain",
-    "deloitte", "pwc", "ey", "kpmg",
-]
+HIGH_SIGNAL_SOURCES = set(SOURCES.keys())
 
 
 PRIORITY_KEYWORDS = [
-    "consumer", "retail", "brand", "china", "australia", "inflation", "cpi",
-    "retail sales", "household spending", "ai", "platform", "pricing", "growth",
-    "margin", "e-commerce", "supply chain", "rba", "消费", "零售", "社零",
-    "电商", "通胀", "居民消费", "价格战",
+    # Macro / policy
+    "economy", "economic growth", "gdp", "inflation", "cpi", "ppi",
+    "interest rate", "central bank", "rba", "employment", "unemployment",
+    "wage", "household spending", "retail sales", "property", "housing",
+    "trade", "exports", "imports", "china economy", "australia economy",
+    "policy", "regulation", "budget", "stimulus",
+    "中国经济", "社零", "居民消费", "通胀", "就业", "房地产", "政策",
+
+    # Financial services
+    "bank", "banking", "financial services", "capital markets",
+    "asset management", "wealth management", "insurance", "fintech",
+    "credit", "lending", "mortgage", "markets", "bond", "equity",
+    "investment", "investors", "rate cut", "rate hike",
+
+    # Consumer / retail
+    "consumer", "retail", "brand", "brands", "fmcg", "e-commerce", "ecommerce",
+    "grocery", "luxury", "beauty", "fashion", "food", "beverage",
+    "pricing", "discount", "margin", "profitability", "shopping",
+    "消费", "零售", "电商", "品牌", "价格战", "性价比",
+
+    # TMT / AI
+    "ai", "artificial intelligence", "generative ai", "cloud", "semiconductor",
+    "chip", "telecom", "platform", "digital transformation", "data center",
+    "automation", "agent", "llm",
+
+    # Healthcare
+    "healthcare", "pharma", "biotech", "medical", "life sciences", "drug",
+    "hospital", "health insurance", "clinical", "vaccine",
+
+    # Energy / industrials
+    "energy", "renewable", "oil", "gas", "mining", "manufacturing",
+    "infrastructure", "supply chain", "logistics", "industrial",
+    "electricity", "battery", "ev",
+
+    # Consulting / strategy
+    "strategy", "growth", "profitability", "productivity", "operating model",
+    "transformation", "market share", "competitive advantage", "cost reduction",
+    "restructuring",
+]
+
+
+GENERAL_KEYWORDS = PRIORITY_KEYWORDS + [
+    "mckinsey", "bcg", "bain", "deloitte", "pwc", "ey", "kpmg",
+    "china", "australia", "global", "asia", "us", "europe",
+    "consumer confidence", "business confidence", "earnings", "revenue",
+    "cost", "pricing power", "demand", "supply", "channels",
 ]
 
 
 # ------------------------------------------------------------
 # Basic helpers
 # ------------------------------------------------------------
-def now_melbourne() -> datetime:
-    return datetime.now(MELBOURNE_TZ)
-
-
-def get_today_string() -> str:
-    return now_melbourne().strftime("%Y-%m-%d")
-
-
 def get_env(name: str, required: bool = True, default: str | None = None) -> str | None:
     value = os.getenv(name, default)
     if required and not value:
@@ -173,14 +261,18 @@ def get_env(name: str, required: bool = True, default: str | None = None) -> str
     return value
 
 
-def clean_text(text: str, max_length: int = 700) -> str:
+def clean_text(text: str, max_length: int = 750) -> str:
     if not text:
         return ""
-    text = re.sub(r"<[^>]+>", " ", str(text))
-    text = re.sub(r"&nbsp;", " ", text)
+
+    text = str(text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("&nbsp;", " ")
     text = re.sub(r"\s+", " ", text).strip()
+
     if len(text) > max_length:
         text = text[:max_length].rstrip() + "..."
+
     return text
 
 
@@ -192,10 +284,6 @@ def normalize_url(url: str) -> str:
 # RSS reading and article selection
 # ------------------------------------------------------------
 def read_rss_feed(feed_url: str):
-    """
-    Read RSS feed with a browser-like User-Agent.
-    Some websites block Python's default request.
-    """
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -220,6 +308,7 @@ def parse_article_datetime(entry) -> datetime | None:
         value = entry.get(key)
         if not value:
             continue
+
         try:
             dt = parsedate_to_datetime(value)
             if dt.tzinfo is None:
@@ -228,11 +317,11 @@ def parse_article_datetime(entry) -> datetime | None:
         except Exception:
             continue
 
-    # feedparser sometimes provides parsed structs
     for key in ["published_parsed", "updated_parsed"]:
         value = entry.get(key)
         if not value:
             continue
+
         try:
             dt = datetime(*value[:6], tzinfo=timezone.utc)
             return dt.astimezone(MELBOURNE_TZ)
@@ -243,39 +332,61 @@ def parse_article_datetime(entry) -> datetime | None:
 
 
 def is_recent_article(article_dt: datetime | None) -> bool:
-    # Keep undated RSS items because many feeds do not provide clean timestamps.
     if article_dt is None:
         return True
+
     cutoff = now_melbourne() - timedelta(hours=LOOKBACK_HOURS)
     return article_dt >= cutoff
 
 
+def infer_region(article: dict) -> str:
+    text = f'{article.get("source", "")} {article.get("title", "")} {article.get("summary", "")}'.lower()
+
+    if any(k in text for k in ["china", "chinese", "beijing", "shanghai", "中国"]):
+        return "China"
+    if any(k in text for k in ["australia", "australian", "rba", "sydney", "melbourne"]):
+        return "Australia"
+    if any(k in text for k in ["u.s.", "united states", "america", "fed", "wall street"]):
+        return "US"
+    if any(k in text for k in ["europe", "european", "ecb", "uk ", "britain"]):
+        return "Europe"
+
+    return "Global"
+
+
 def article_score(article: dict) -> int:
     source = article.get("source", "")
-    text = f'{article.get("title", "")} {article.get("summary", "")}'.lower()
+    source_category = article.get("category_hint", "")
+    text = f'{source} {article.get("title", "")} {article.get("summary", "")}'.lower()
 
     score = 0
 
     if source in HIGH_SIGNAL_SOURCES:
-        score += 5
+        score += 4
 
     if is_recent_article(article.get("_dt")):
         score += 3
 
     for keyword in PRIORITY_KEYWORDS:
         if keyword.lower() in text:
-            score += 2
+            score += 3
 
-    for keyword in KEYWORDS:
+    for keyword in GENERAL_KEYWORDS:
         if keyword.lower() in text:
             score += 1
 
-    # Consumer and macro should be the main axis.
-    if any(k in text for k in ["consumer", "retail", "brand", "消费", "零售", "社零"]):
+    # Make macro and finance structurally important.
+    if source_category == "Macro & Policy":
+        score += 5
+
+    if source_category == "Financial Services & Markets":
         score += 4
 
-    if any(k in text for k in ["inflation", "cpi", "rba", "gdp", "就业", "通胀", "居民消费"]):
+    if source_category == "Consulting & Strategy Insights":
         score += 3
+
+    if source_category == "Consumer & Retail":
+        score += 2
 
     return score
 
@@ -299,12 +410,6 @@ def deduplicate_articles(articles: list[dict]) -> list[dict]:
 
 
 def fetch_articles(max_per_source: int = MAX_PER_SOURCE) -> list[dict]:
-    """
-    Version 1.4 selection logic:
-    1. Build a primary pool: recent + keyword/high-signal articles.
-    2. Build a fallback pool: latest articles from all sources.
-    3. If primary pool is too small, combine with fallback pool.
-    """
     selected_articles = []
     fallback_articles = []
 
@@ -322,10 +427,12 @@ def fetch_articles(max_per_source: int = MAX_PER_SOURCE) -> list[dict]:
             entries = feed.entries[:max_per_source]
             print(f"  Entries found: {len(entries)}")
 
+            category_hint = SOURCE_CATEGORY_HINTS.get(source_name, "General")
+
             for entry in entries:
                 title = clean_text(entry.get("title", ""), max_length=260)
                 link = entry.get("link", "").strip()
-                summary = clean_text(entry.get("summary", entry.get("description", "")), max_length=750)
+                summary = clean_text(entry.get("summary", entry.get("description", "")), max_length=800)
                 article_dt = parse_article_datetime(entry)
 
                 if not title or not link:
@@ -333,6 +440,8 @@ def fetch_articles(max_per_source: int = MAX_PER_SOURCE) -> list[dict]:
 
                 article = {
                     "source": source_name,
+                    "category_hint": category_hint,
+                    "region_hint": "",
                     "title": title,
                     "link": link,
                     "summary": summary,
@@ -340,8 +449,10 @@ def fetch_articles(max_per_source: int = MAX_PER_SOURCE) -> list[dict]:
                     "_dt": article_dt,
                 }
 
+                article["region_hint"] = infer_region(article)
+
                 combined_text = f"{title} {summary}".lower()
-                keyword_hit = any(keyword.lower() in combined_text for keyword in KEYWORDS)
+                keyword_hit = any(keyword.lower() in combined_text for keyword in GENERAL_KEYWORDS)
                 high_signal_source = source_name in HIGH_SIGNAL_SOURCES
                 recent = is_recent_article(article_dt)
 
@@ -372,10 +483,13 @@ def fetch_articles(max_per_source: int = MAX_PER_SOURCE) -> list[dict]:
 # ------------------------------------------------------------
 def format_articles_for_prompt(articles: list[dict]) -> str:
     blocks = []
+
     for index, article in enumerate(articles, start=1):
         blocks.append(
             f"""
 Article {index}
+Category Hint: {article["category_hint"]}
+Region Hint: {article["region_hint"]}
 Source: {article["source"]}
 Title: {article["title"]}
 Published: {article["published"]}
@@ -383,6 +497,7 @@ Summary: {article["summary"]}
 Link: {article["link"]}
 """.strip()
         )
+
     return "\n\n".join(blocks)
 
 
@@ -400,11 +515,12 @@ def parse_json_from_model(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Fallback: extract the first JSON-looking object.
         start = text.find("{")
         end = text.rfind("}")
+
         if start != -1 and end != -1 and end > start:
             return json.loads(text[start:end + 1])
+
         raise
 
 
@@ -412,22 +528,25 @@ def default_digest_data(articles: list[dict], error_message: str | None = None) 
     first_article = articles[0] if articles else None
 
     return {
-        "executive_snapshot": "今日信息源返回内容有限，系统已生成一版保守摘要；建议重点查看深读文章并继续观察明日趋势。",
-        "top_3_market_signals": [],
-        "china_consumer_macro_watch": [],
-        "australia_macro_consumer_context": [],
-        "global_consumer_retail_watch": [],
-        "platform_channel_shift": [],
-        "ai_tmt_enabler": [],
-        "consulting_lens": {
-            "case_question": "如果一个消费品牌在宏观压力和渠道变化下增长放缓，应该如何诊断问题？",
-            "suggested_framework": "可从市场需求、消费者分层、渠道结构、价格体系、成本与利润率、竞争格局六个维度拆解。",
-            "why_it_matters": "这类问题高度贴近消费品与零售咨询项目，也适合 Irene 进行 case interview 训练。",
+        "executive_snapshot": "今日信息源返回内容有限，系统已生成保守版摘要；建议重点查看 Top Signals 与深读文章。",
+        "top_5_strategic_signals": [],
+        "macro_policy_watch": [],
+        "financial_services_markets": [],
+        "consumer_retail": [],
+        "tmt_ai": [],
+        "healthcare_life_sciences": [],
+        "energy_industrials_infrastructure": [],
+        "consulting_strategy_insights": [],
+        "why_this_matters": "今日可用信息不足，暂不提炼强趋势判断。",
+        "notion_analysis_seed": {
+            "signal": "今日无明确高信号事件",
+            "analysis_question": "今天看到的外部变化中，哪一条最可能影响企业增长或行业竞争格局？",
+            "suggested_framework": "可用 3C、4P、Profit Tree、Price × Volume × Mix、Value Chain 或 Porter Five Forces 进行初步拆解。",
+            "notion_skill_tags": [
+                "行业洞察 / Industry Insight",
+                "结构化能力 / Structured Thinking",
+            ],
         },
-        "irene_angle": [
-            "将每日高信号新闻记录到 Notion，按 Consumer / Macro / Platform / AI Enabler 分类。",
-            "把重点事件改写成一个 case question，用于训练 issue tree 和商业判断。",
-        ],
         "deep_read": {
             "title": first_article["title"] if first_article else "今日无明确推荐",
             "source": first_article["source"] if first_article else "N/A",
@@ -443,65 +562,129 @@ def generate_digest_data(articles: list[dict]) -> dict:
         return default_digest_data([], "No articles were fetched from RSS sources.")
 
     client = OpenAI()
-    today = get_today_string()
+
+    report_date = get_report_date_string()
+    generated_time = get_generated_time_string()
     articles_text = format_articles_for_prompt(articles)
 
     prompt = f"""
-You are Irene's personal consumer market and strategy intelligence analyst.
+You are Irene's personal world strategy radar.
 
-Irene is a University of Melbourne Bachelor of Arts student majoring in Economics. She targets strategy consulting. Her core interest is consumer markets, brand growth, retail, platforms, and commercial strategy. She also has prior China Mobile internship experience in AI, TMT, policy tracking, and industry research. Therefore, AI/TMT should be treated as an enabling lens, not the main theme.
+Irene is a University of Melbourne Bachelor of Arts student majoring in Economics.
+She targets strategy consulting.
+She wants to know what is happening in the world every day, especially business, economy, markets, and industry changes.
 
-Your task: based ONLY on the articles below, create a structured daily intelligence brief in Chinese.
+The email should be a world radar, not a heavy case-training task.
+Deep analysis will happen later in Irene's Notion consulting training workspace.
 
-Important rules:
-1. Use Chinese as the main language, but keep English proper nouns.
-2. Do not invent facts not supported by the articles.
-3. Prioritise consumer market, retail, brand, platform/channel, China macro, Australia macro, and AI/TMT enabler signals.
-4. Make it useful for consulting preparation: case interview, coffee chat, resume/LinkedIn, and Notion knowledge base.
-5. If there is not enough information for a section, return an empty list for that section rather than inventing content.
-6. Output ONLY valid JSON. Do not use Markdown. Do not wrap it in a code block.
+Editorial positioning:
+- Main goal: help Irene know key developments and understand why they matter.
+- Use consulting-style industry groups rather than region-only sections.
+- Cover macro/policy, financial services, consumer/retail, TMT/AI, healthcare, energy/industrials, and consulting/strategy insights.
+- China and Australia economic movements are important and should appear under Macro & Policy when relevant.
+- Financial services and markets should be a regular section.
+- Consumer & Retail should be included, but not dominate the entire brief.
+- AI/TMT should be treated as a business and strategy signal, not just tech gossip.
+- Keep Notion connection lightweight: only one analysis seed at the end.
 
-Date: {today}
-Timezone: Australia/Melbourne
+Rules:
+1. Use Chinese as the main language. Keep English proper nouns.
+2. Use only the articles provided. Do not invent facts.
+3. Prioritise significance over quantity.
+4. If a section has insufficient evidence, return an empty list for that section.
+5. Each item must explain why it matters.
+6. Output ONLY valid JSON. No Markdown. No code fences.
+
+Report date: {report_date}
+Generated time: {generated_time} Melbourne Time
 
 Return JSON using exactly this schema:
 {{
-  "executive_snapshot": "one sentence in Chinese",
-  "top_3_market_signals": [
+  "executive_snapshot": "one concise sentence in Chinese summarising the most important overall signal",
+  "top_5_strategic_signals": [
     {{
       "headline": "short headline",
+      "category": "Macro & Policy / Financial Services & Markets / Consumer & Retail / TMT & AI / Healthcare & Life Sciences / Energy, Industrials & Infrastructure / Consulting & Strategy Insights",
+      "region": "China / Australia / Global / US / Europe / Other",
       "what_happened": "what happened",
-      "why_it_matters": "why it matters",
-      "irene_angle": "how Irene can use this",
+      "why_it_matters": "why it matters for business, markets, economy, or strategy",
       "source_title": "article title",
       "source_url": "article link"
     }}
   ],
-  "china_consumer_macro_watch": [
-    {{"headline": "", "insight": "", "source_title": "", "source_url": ""}}
+  "macro_policy_watch": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
   ],
-  "australia_macro_consumer_context": [
-    {{"headline": "", "insight": "", "source_title": "", "source_url": ""}}
+  "financial_services_markets": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
   ],
-  "global_consumer_retail_watch": [
-    {{"headline": "", "insight": "", "source_title": "", "source_url": ""}}
+  "consumer_retail": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
   ],
-  "platform_channel_shift": [
-    {{"headline": "", "insight": "", "source_title": "", "source_url": ""}}
+  "tmt_ai": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
   ],
-  "ai_tmt_enabler": [
-    {{"headline": "", "insight": "", "source_title": "", "source_url": ""}}
+  "healthcare_life_sciences": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
   ],
-  "consulting_lens": {{
-    "case_question": "a consulting-style case question",
-    "suggested_framework": "a concise framework Irene can use",
-    "why_it_matters": "why this is useful"
+  "energy_industrials_infrastructure": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
+  ],
+  "consulting_strategy_insights": [
+    {{
+      "headline": "",
+      "region": "",
+      "insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
+  ],
+  "why_this_matters": "a short paragraph explaining what today's signals collectively suggest",
+  "notion_analysis_seed": {{
+    "signal": "the one signal most worth analysing later in Notion",
+    "analysis_question": "one consulting-style question Irene can analyse in Notion",
+    "suggested_framework": "one concise suggested framework, e.g. 3C, 4P, Profit Tree, Price x Volume x Mix, Value Chain, Market Sizing, Porter's Five Forces",
+    "notion_skill_tags": [
+      "suggested Notion skill tag 1",
+      "suggested Notion skill tag 2"
+    ]
   }},
-  "irene_angle": [
-    "specific suggestion 1",
-    "specific suggestion 2",
-    "specific suggestion 3"
-  ],
   "deep_read": {{
     "title": "article title",
     "source": "source name",
@@ -521,7 +704,9 @@ Articles:
             model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
             input=prompt,
         )
+
         return parse_json_from_model(response.output_text)
+
     except Exception as error:
         print(f"OpenAI generation or JSON parsing failed: {error}")
         return default_digest_data(articles, str(error))
@@ -537,15 +722,33 @@ def esc(value) -> str:
 def link_html(title: str, url: str) -> str:
     title = esc(title) if title else "Source"
     url = esc(url)
+
     if not url:
         return title
+
     return f'<a href="{url}" style="color:#2563eb; text-decoration:none;">{title}</a>'
 
 
-def section_title(title: str, subtitle: str = "") -> str:
-    subtitle_html = f'<div style="font-size:13px; color:#777; margin-top:4px;">{esc(subtitle)}</div>' if subtitle else ""
+def badge(text: str) -> str:
+    if not text:
+        return ""
+
     return f"""
-    <div style="margin-top:26px; margin-bottom:12px;">
+    <span style="display:inline-block; font-size:11px; color:#374151; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:999px; padding:3px 8px; margin-right:6px;">
+      {esc(text)}
+    </span>
+    """
+
+
+def section_title(title: str, subtitle: str = "") -> str:
+    subtitle_html = (
+        f'<div style="font-size:13px; color:#777; margin-top:4px; line-height:1.5;">{esc(subtitle)}</div>'
+        if subtitle
+        else ""
+    )
+
+    return f"""
+    <div style="margin-top:28px; margin-bottom:12px;">
       <div style="font-size:18px; font-weight:800; color:#111827;">{esc(title)}</div>
       {subtitle_html}
     </div>
@@ -563,6 +766,7 @@ def empty_line() -> str:
 def small_source(item: dict) -> str:
     source_title = item.get("source_title") or item.get("title") or "Source"
     source_url = item.get("source_url") or item.get("link") or ""
+
     return f"""
     <div style="font-size:12px; color:#6b7280; margin-top:10px;">
       Source: {link_html(source_title, source_url)}
@@ -570,14 +774,19 @@ def small_source(item: dict) -> str:
     """
 
 
-def top_signal_card(item: dict, index: int) -> str:
+def strategic_signal_card(item: dict, index: int) -> str:
     return f"""
     <div style="border:1px solid #e5e7eb; border-radius:16px; padding:16px; margin-bottom:12px; background:#ffffff;">
-      <div style="font-size:13px; color:#2563eb; font-weight:700; margin-bottom:6px;">Signal {index}</div>
-      <div style="font-size:17px; font-weight:800; color:#111827; margin-bottom:10px;">{esc(item.get('headline'))}</div>
-      <div style="font-size:14px; line-height:1.7; color:#374151;"><strong>What happened:</strong> {esc(item.get('what_happened'))}</div>
-      <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:6px;"><strong>Why it matters:</strong> {esc(item.get('why_it_matters'))}</div>
-      <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:6px;"><strong>Irene angle:</strong> {esc(item.get('irene_angle'))}</div>
+      <div style="margin-bottom:8px;">
+        <span style="font-size:13px; color:#2563eb; font-weight:800;">Signal {index}</span>
+      </div>
+      <div style="margin-bottom:8px;">
+        {badge(item.get("category"))}
+        {badge(item.get("region"))}
+      </div>
+      <div style="font-size:17px; font-weight:800; color:#111827; margin-bottom:10px;">{esc(item.get("headline"))}</div>
+      <div style="font-size:14px; line-height:1.7; color:#374151;"><strong>What happened:</strong> {esc(item.get("what_happened"))}</div>
+      <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:6px;"><strong>Why it matters:</strong> {esc(item.get("why_it_matters"))}</div>
       {small_source(item)}
     </div>
     """
@@ -586,8 +795,9 @@ def top_signal_card(item: dict, index: int) -> str:
 def insight_item(item: dict) -> str:
     return f"""
     <div style="border-left:4px solid #d1d5db; padding:10px 0 10px 14px; margin-bottom:12px;">
-      <div style="font-size:15px; font-weight:750; color:#111827;">{esc(item.get('headline'))}</div>
-      <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:4px;">{esc(item.get('insight'))}</div>
+      <div style="margin-bottom:6px;">{badge(item.get("region"))}</div>
+      <div style="font-size:15px; font-weight:750; color:#111827;">{esc(item.get("headline"))}</div>
+      <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:4px;">{esc(item.get("insight"))}</div>
       {small_source(item)}
     </div>
     """
@@ -595,37 +805,46 @@ def insight_item(item: dict) -> str:
 
 def render_list_section(title: str, items: list, subtitle: str = "") -> str:
     html = section_title(title, subtitle)
+
     if not items:
         return html + empty_line()
+
     return html + "".join(insight_item(item) for item in items[:4])
 
 
 def render_bullets(items: list[str]) -> str:
     if not items:
         return empty_line()
+
     bullet_html = "".join(
-        f'<li style="margin-bottom:8px; line-height:1.7;">{esc(item)}</li>' for item in items[:5]
+        f'<li style="margin-bottom:8px; line-height:1.7;">{esc(item)}</li>'
+        for item in items[:5]
     )
+
     return f'<ul style="padding-left:20px; margin:0; color:#374151; font-size:14px;">{bullet_html}</ul>'
 
 
 def ensure_list(value) -> list:
     if isinstance(value, list):
         return value
+
     if value:
         return [value]
+
     return []
 
 
 def build_html_email(data: dict, article_count: int) -> str:
-    today = get_today_string()
+    report_date = get_report_date_string()
+    generated_time = get_generated_time_string()
 
-    top_signals = ensure_list(data.get("top_3_market_signals"))[:3]
+    top_signals = ensure_list(data.get("top_5_strategic_signals"))[:5]
     top_signals_html = "".join(
-        top_signal_card(item, idx) for idx, item in enumerate(top_signals, start=1)
+        strategic_signal_card(item, idx)
+        for idx, item in enumerate(top_signals, start=1)
     ) or empty_line()
 
-    consulting = data.get("consulting_lens") or {}
+    notion_seed = data.get("notion_analysis_seed") or {}
     deep_read = data.get("deep_read") or {}
     system_note = data.get("system_note") or ""
 
@@ -642,49 +861,67 @@ def build_html_email(data: dict, article_count: int) -> str:
 <html>
 <body style="margin:0; padding:0; background:#f3f4f6;">
   <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,'PingFang SC','Microsoft YaHei',sans-serif; background:#f3f4f6; padding:24px;">
-    <div style="max-width:760px; margin:0 auto; background:#ffffff; border-radius:20px; padding:28px; border:1px solid #e5e7eb;">
-      <div style="font-size:13px; color:#6b7280; margin-bottom:8px;">{today} · Melbourne Time · {article_count} source items reviewed</div>
-      <h1 style="font-size:28px; line-height:1.18; margin:0 0 14px; color:#111827;">Daily Consumer & Strategy Brief</h1>
+    <div style="max-width:780px; margin:0 auto; background:#ffffff; border-radius:20px; padding:28px; border:1px solid #e5e7eb;">
+      <div style="font-size:13px; color:#6b7280; margin-bottom:8px;">
+        Report date: {report_date} · Generated: {generated_time} Melbourne Time · {article_count} source items reviewed
+      </div>
+
+      <h1 style="font-size:28px; line-height:1.18; margin:0 0 14px; color:#111827;">
+        Daily World Strategy Brief
+      </h1>
+
+      <div style="font-size:13px; color:#6b7280; line-height:1.6; margin-bottom:18px;">
+        Structured by consulting-style industry groups: Macro & Policy · Financial Services · Consumer & Retail · TMT & AI · Healthcare · Energy & Industrials · Consulting Insights
+      </div>
 
       <div style="background:#eef2ff; border:1px solid #dbe4ff; border-radius:16px; padding:16px; margin:18px 0 22px;">
         <div style="font-size:13px; color:#4f46e5; font-weight:800; margin-bottom:6px;">Executive Snapshot</div>
-        <div style="font-size:16px; line-height:1.7; color:#111827; font-weight:650;">{esc(data.get('executive_snapshot'))}</div>
+        <div style="font-size:16px; line-height:1.7; color:#111827; font-weight:650;">{esc(data.get("executive_snapshot"))}</div>
       </div>
 
-      {section_title('Top 3 Market Signals', '跨中国、澳洲、全球消费市场与 AI/TMT enabler 的今日最重要信号')}
+      {section_title("Top 5 Strategic Signals", "跨宏观、金融、消费、科技、医疗、工业和咨询洞察的今日关键动向")}
       {top_signals_html}
 
-      {render_list_section('China Consumer & Macro Watch', ensure_list(data.get('china_consumer_macro_watch')), '中国消费、零售、平台经济、社零、CPI/PPI、就业、政策与品牌竞争')}
+      {render_list_section("Macro & Policy Watch", ensure_list(data.get("macro_policy_watch")), "中国、澳洲与全球宏观经济、通胀、就业、利率、政策、贸易、地产与消费支出")}
 
-      {render_list_section('Australia Macro & Consumer Context', ensure_list(data.get('australia_macro_consumer_context')), 'RBA、利率、通胀、工资、就业、住房、消费支出与本地零售环境')}
+      {render_list_section("Financial Services & Markets", ensure_list(data.get("financial_services_markets")), "银行、资本市场、资产管理、保险、fintech、信贷、债券、股市与金融监管")}
 
-      {render_list_section('Global Consumer & Retail Watch', ensure_list(data.get('global_consumer_retail_watch')), '全球消费品公司、零售商、奢侈品、美妆、运动、食品饮料与电商平台')}
+      {render_list_section("Consumer & Retail", ensure_list(data.get("consumer_retail")), "消费品、零售、电商、品牌、渠道、价格战、奢侈品、美妆、食品饮料与会员制零售")}
 
-      {render_list_section('Platform & Channel Shift', ensure_list(data.get('platform_channel_shift')), '电商、内容平台、线下零售、会员制、直播电商、推荐算法与私域')}
+      {render_list_section("TMT & AI", ensure_list(data.get("tmt_ai")), "AI、云、芯片、平台、数据中心、通信、数字化转型与企业技术")}
 
-      {render_list_section('AI / TMT Enabler', ensure_list(data.get('ai_tmt_enabler')), '只看技术如何改变消费、零售、营销、供应链、消费者洞察与渠道效率')}
+      {render_list_section("Healthcare & Life Sciences", ensure_list(data.get("healthcare_life_sciences")), "医药、医疗服务、生物科技、医保、健康消费与生命科学")}
 
-      {section_title('Consulting Lens')}
+      {render_list_section("Energy, Industrials & Infrastructure", ensure_list(data.get("energy_industrials_infrastructure")), "能源、制造业、矿业、供应链、物流、基础设施、新能源与工业企业")}
+
+      {render_list_section("Consulting & Strategy Insights", ensure_list(data.get("consulting_strategy_insights")), "咨询公司观点、企业战略、组织转型、生产率、盈利能力与运营模式")}
+
+      {section_title("Why This Matters", "今天这些信号放在一起，说明了什么？")}
       <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:16px; padding:16px;">
-        <div style="font-size:14px; line-height:1.7; color:#374151;"><strong>Case question:</strong> {esc(consulting.get('case_question'))}</div>
-        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:8px;"><strong>Suggested framework:</strong> {esc(consulting.get('suggested_framework'))}</div>
-        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:8px;"><strong>Why it matters:</strong> {esc(consulting.get('why_it_matters'))}</div>
+        <div style="font-size:14px; line-height:1.8; color:#374151;">{esc(data.get("why_this_matters"))}</div>
       </div>
 
-      {section_title('Irene Angle', '可以如何沉淀为 coffee chat、case interview、resume / LinkedIn 或 Notion 素材')}
-      {render_bullets(ensure_list(data.get('irene_angle')))}
+      {section_title("Notion Analysis Seed", "只选一条信号，作为进入 Notion 深度分析的入口")}
+      <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:16px; padding:16px;">
+        <div style="font-size:13px; color:#15803d; font-weight:800; margin-bottom:8px;">Recommended analysis seed</div>
+        <div style="font-size:15px; line-height:1.7; color:#111827;"><strong>Signal:</strong> {esc(notion_seed.get("signal"))}</div>
+        <div style="font-size:15px; line-height:1.7; color:#111827; margin-top:8px;"><strong>Question:</strong> {esc(notion_seed.get("analysis_question"))}</div>
+        <div style="font-size:15px; line-height:1.7; color:#111827; margin-top:8px;"><strong>Framework:</strong> {esc(notion_seed.get("suggested_framework"))}</div>
+        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:12px;"><strong>Suggested Notion tags:</strong></div>
+        {render_bullets(ensure_list(notion_seed.get("notion_skill_tags")))}
+      </div>
 
-      {section_title('今日建议深读 1 篇')}
+      {section_title("今日建议深读 1 篇")}
       <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:16px; padding:16px;">
-        <div style="font-size:16px; font-weight:800; color:#111827;">{link_html(deep_read.get('title', '今日无明确推荐'), deep_read.get('link', ''))}</div>
-        <div style="font-size:13px; color:#6b7280; margin-top:6px;">Source: {esc(deep_read.get('source'))}</div>
-        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:8px;">{esc(deep_read.get('reason'))}</div>
+        <div style="font-size:16px; font-weight:800; color:#111827;">{link_html(deep_read.get("title", "今日无明确推荐"), deep_read.get("link", ""))}</div>
+        <div style="font-size:13px; color:#6b7280; margin-top:6px;">Source: {esc(deep_read.get("source"))}</div>
+        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:8px;">{esc(deep_read.get("reason"))}</div>
       </div>
 
       {system_note_html}
 
       <div style="border-top:1px solid #e5e7eb; margin-top:28px; padding-top:16px; font-size:12px; color:#9ca3af; line-height:1.6;">
-        Generated automatically for Irene. Theme: consumer markets as the main axis, macro as context, AI/TMT as enabler, consulting as output.
+        Generated automatically for Irene. Email = world radar; Notion = analysis workspace.
       </div>
     </div>
   </div>
@@ -715,6 +952,7 @@ def send_email(subject: str, body_html: str) -> None:
     email_to_raw = get_env("EMAIL_TO")
 
     recipients = [email.strip() for email in email_to_raw.split(",") if email.strip()]
+
     if not recipients:
         raise ValueError("EMAIL_TO is empty. Please check your .env file.")
 
@@ -726,6 +964,7 @@ def send_email(subject: str, body_html: str) -> None:
     message["Subject"] = subject
 
     plain_text = html_to_plain_text(body_html)
+
     message.attach(MIMEText(plain_text, "plain", "utf-8"))
     message.attach(MIMEText(body_html, "html", "utf-8"))
 
@@ -740,12 +979,14 @@ def send_email(subject: str, body_html: str) -> None:
 # Main workflow
 # ------------------------------------------------------------
 def main() -> None:
-    today = get_today_string()
+    report_date = get_report_date_string()
+    generated_time = get_generated_time_string()
 
-    print("======================================")
-    print("Irene Daily Consumer & Strategy Brief")
-    print("======================================")
-    print(f"Date: {today} Melbourne Time")
+    print("=================================")
+    print("Irene Daily World Strategy Brief")
+    print("=================================")
+    print(f"Report date: {report_date}")
+    print(f"Generated: {generated_time} Melbourne Time")
 
     articles = fetch_articles(max_per_source=MAX_PER_SOURCE)
     articles = articles[:MAX_ARTICLES_FOR_AI]
@@ -755,7 +996,8 @@ def main() -> None:
     digest_data = generate_digest_data(articles)
     digest_html = build_html_email(digest_data, article_count=len(articles))
 
-    subject = f"Daily Consumer & Strategy Brief | {today}"
+    subject = f"Daily World Strategy Brief | {report_date}"
+
     send_email(subject, digest_html)
 
     print("Done.")

@@ -18,20 +18,21 @@ from openai import OpenAI
 
 # ============================================================
 # Irene Daily World Strategy Brief
-# Version 2.0
+# Version 2.4
 #
 # Positioning:
 # - Email = world radar
 # - Notion = deep analysis workspace
 #
-# Structure:
-# 1. Macro & Policy
-# 2. Financial Services & Markets
-# 3. Consumer & Retail
-# 4. TMT & AI
-# 5. Healthcare & Life Sciences
-# 6. Energy, Industrials & Infrastructure
-# 7. Consulting & Strategy Insights
+# Key improvements:
+# - More balanced industry-group sourcing.
+# - Each item includes:
+#   1. What happened
+#   2. Why it matters
+#   3. Daily Insight = mechanism explanation + conclusion
+# - Daily Insight is objective and does NOT use "Irene", "you", or study-advice wording.
+# - More sources for Energy / Industrials and Consulting / Strategy.
+# - Avoid empty placeholder cards like "Source: Source".
 #
 # Date logic:
 # - Report date = previous day
@@ -45,7 +46,7 @@ MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 REPORT_LAG_DAYS = 1
 LOOKBACK_HOURS = 42
 MAX_PER_SOURCE = 25
-MAX_ARTICLES_FOR_AI = 55
+MAX_ARTICLES_FOR_AI = 75
 MIN_ARTICLES_FOR_DIGEST = 10
 REQUEST_TIMEOUT = 20
 
@@ -104,6 +105,9 @@ SOURCES = {
     "Google News - Markets": google_news_rss(
         "markets bonds equities interest rates investors banks earnings"
     ),
+    "Google News - Banks and Credit": google_news_rss(
+        "banks credit lending mortgage risk financial regulation"
+    ),
 
     # Consumer / retail
     "Retail Dive": "https://www.retaildive.com/feeds/news/",
@@ -127,13 +131,19 @@ SOURCES = {
     "NVIDIA Blog": "https://blogs.nvidia.com/feed/",
     "NVIDIA Newsroom": "https://nvidianews.nvidia.com/rss",
     "Google News - TMT AI": google_news_rss(
-        "AI cloud semiconductor telecom platform data center digital transformation"
+        "AI cloud semiconductor telecom platform data center digital transformation AI agent coding agent model release"
+    ),
+    "Google News - AI Frontier": google_news_rss(
+        "AI agents autonomous agents coding agents open source AI frontier model AI startup"
     ),
 
     # Healthcare / life sciences
     "Fierce Pharma": "https://www.fiercepharma.com/rss/xml",
     "Google News - Healthcare": google_news_rss(
         "healthcare pharma biotech medical services life sciences hospitals drug pricing"
+    ),
+    "Google News - Pharma Strategy": google_news_rss(
+        "pharma strategy biotech partnership drug pricing FDA clinical trial"
     ),
 
     # Energy / industrials / infrastructure
@@ -143,12 +153,42 @@ SOURCES = {
     "Google News - Supply Chain": google_news_rss(
         "supply chain logistics manufacturing industrial production shipping"
     ),
+    "Google News - AI Energy Demand": google_news_rss(
+        "AI data centers electricity power grid energy demand utilities"
+    ),
+    "Google News - Data Centers Energy": google_news_rss(
+        "data centers power demand electricity grid energy infrastructure"
+    ),
+    "Google News - Infrastructure Investment": google_news_rss(
+        "infrastructure investment transport utilities grid construction industrial strategy"
+    ),
+    "Google News - Mining Critical Minerals": google_news_rss(
+        "mining critical minerals lithium copper rare earths battery supply chain"
+    ),
+    "Google News - Manufacturing Strategy": google_news_rss(
+        "manufacturing strategy industrial production automation factory reshoring"
+    ),
 
     # Consulting / strategy
     "McKinsey Insights": "https://www.mckinsey.com/insights/rss.aspx",
     "BCG Insights": "https://www.bcg.com/publications/rss",
     "Google News - Strategy Consulting": google_news_rss(
         "corporate strategy transformation productivity profitability operating model consulting"
+    ),
+    "Google News - McKinsey Strategy": google_news_rss(
+        "McKinsey strategy transformation productivity operating model growth"
+    ),
+    "Google News - BCG Strategy": google_news_rss(
+        "BCG strategy transformation growth productivity operating model"
+    ),
+    "Google News - Bain Strategy": google_news_rss(
+        "Bain strategy customer growth private equity transformation"
+    ),
+    "Google News - Business Transformation": google_news_rss(
+        "business transformation operating model cost reduction productivity restructuring"
+    ),
+    "Google News - Corporate Strategy": google_news_rss(
+        "corporate strategy market share competitive advantage growth profitability"
     ),
 }
 
@@ -168,6 +208,7 @@ SOURCE_CATEGORY_HINTS = {
     "Dow Jones Markets": "Financial Services & Markets",
     "Google News - Financial Services": "Financial Services & Markets",
     "Google News - Markets": "Financial Services & Markets",
+    "Google News - Banks and Credit": "Financial Services & Markets",
 
     "Retail Dive": "Consumer & Retail",
     "Marketing Dive": "Consumer & Retail",
@@ -185,16 +226,50 @@ SOURCE_CATEGORY_HINTS = {
     "NVIDIA Blog": "TMT & AI",
     "NVIDIA Newsroom": "TMT & AI",
     "Google News - TMT AI": "TMT & AI",
+    "Google News - AI Frontier": "TMT & AI",
 
     "Fierce Pharma": "Healthcare & Life Sciences",
     "Google News - Healthcare": "Healthcare & Life Sciences",
+    "Google News - Pharma Strategy": "Healthcare & Life Sciences",
 
     "Google News - Energy Industrials": "Energy, Industrials & Infrastructure",
     "Google News - Supply Chain": "Energy, Industrials & Infrastructure",
+    "Google News - AI Energy Demand": "Energy, Industrials & Infrastructure",
+    "Google News - Data Centers Energy": "Energy, Industrials & Infrastructure",
+    "Google News - Infrastructure Investment": "Energy, Industrials & Infrastructure",
+    "Google News - Mining Critical Minerals": "Energy, Industrials & Infrastructure",
+    "Google News - Manufacturing Strategy": "Energy, Industrials & Infrastructure",
 
     "McKinsey Insights": "Consulting & Strategy Insights",
     "BCG Insights": "Consulting & Strategy Insights",
     "Google News - Strategy Consulting": "Consulting & Strategy Insights",
+    "Google News - McKinsey Strategy": "Consulting & Strategy Insights",
+    "Google News - BCG Strategy": "Consulting & Strategy Insights",
+    "Google News - Bain Strategy": "Consulting & Strategy Insights",
+    "Google News - Business Transformation": "Consulting & Strategy Insights",
+    "Google News - Corporate Strategy": "Consulting & Strategy Insights",
+}
+
+
+CATEGORY_ORDER = [
+    "Macro & Policy",
+    "Financial Services & Markets",
+    "Consumer & Retail",
+    "TMT & AI",
+    "Healthcare & Life Sciences",
+    "Energy, Industrials & Infrastructure",
+    "Consulting & Strategy Insights",
+]
+
+
+CATEGORY_TARGETS = {
+    "Macro & Policy": 11,
+    "Financial Services & Markets": 10,
+    "Consumer & Retail": 9,
+    "TMT & AI": 11,
+    "Healthcare & Life Sciences": 8,
+    "Energy, Industrials & Infrastructure": 12,
+    "Consulting & Strategy Insights": 10,
 }
 
 
@@ -225,21 +300,22 @@ PRIORITY_KEYWORDS = [
     # TMT / AI
     "ai", "artificial intelligence", "generative ai", "cloud", "semiconductor",
     "chip", "telecom", "platform", "digital transformation", "data center",
-    "automation", "agent", "llm",
+    "automation", "agent", "llm", "coding agent", "model release",
+    "frontier model", "ai safety", "prompt injection", "open source ai",
 
     # Healthcare
     "healthcare", "pharma", "biotech", "medical", "life sciences", "drug",
-    "hospital", "health insurance", "clinical", "vaccine",
+    "hospital", "health insurance", "clinical", "vaccine", "FDA",
 
     # Energy / industrials
     "energy", "renewable", "oil", "gas", "mining", "manufacturing",
     "infrastructure", "supply chain", "logistics", "industrial",
-    "electricity", "battery", "ev",
+    "electricity", "battery", "ev", "grid", "power demand", "data center",
 
     # Consulting / strategy
     "strategy", "growth", "profitability", "productivity", "operating model",
     "transformation", "market share", "competitive advantage", "cost reduction",
-    "restructuring",
+    "restructuring", "pricing power",
 ]
 
 
@@ -375,15 +451,24 @@ def article_score(article: dict) -> int:
         if keyword.lower() in text:
             score += 1
 
-    # Make macro and finance structurally important.
+    # Make selected industry groups structurally important.
     if source_category == "Macro & Policy":
         score += 5
 
     if source_category == "Financial Services & Markets":
         score += 4
 
-    if source_category == "Consulting & Strategy Insights":
+    if source_category == "TMT & AI":
         score += 3
+
+    if source_category == "Healthcare & Life Sciences":
+        score += 3
+
+    if source_category == "Energy, Industrials & Infrastructure":
+        score += 4
+
+    if source_category == "Consulting & Strategy Insights":
+        score += 4
 
     if source_category == "Consumer & Retail":
         score += 2
@@ -476,6 +561,52 @@ def fetch_articles(max_per_source: int = MAX_PER_SOURCE) -> list[dict]:
         return sorted(combined, key=article_score, reverse=True)
 
     return sorted(selected_articles, key=article_score, reverse=True)
+
+
+def balance_articles_by_category(articles: list[dict], max_total: int = MAX_ARTICLES_FOR_AI) -> list[dict]:
+    """
+    Balance article candidates by consulting-style industry group.
+
+    This prevents one high-volume category from crowding out other sections.
+    """
+    articles = deduplicate_articles(articles)
+
+    grouped = {category: [] for category in CATEGORY_ORDER}
+
+    for article in articles:
+        category = article.get("category_hint", "General")
+        if category in grouped:
+            grouped[category].append(article)
+
+    balanced = []
+
+    print("Article candidates by category:")
+
+    for category in CATEGORY_ORDER:
+        category_articles = sorted(grouped.get(category, []), key=article_score, reverse=True)
+        target = CATEGORY_TARGETS.get(category, 6)
+        chosen = category_articles[:target]
+
+        print(f"- {category}: {len(category_articles)} available, {len(chosen)} selected")
+
+        balanced.extend(chosen)
+
+    balanced = deduplicate_articles(balanced)
+
+    if len(balanced) < max_total:
+        selected_keys = {normalize_url(article.get("link", "")) for article in balanced}
+
+        remaining = [
+            article for article in articles
+            if normalize_url(article.get("link", "")) not in selected_keys
+        ]
+
+        remaining = sorted(remaining, key=article_score, reverse=True)
+
+        space_left = max_total - len(balanced)
+        balanced.extend(remaining[:space_left])
+
+    return deduplicate_articles(balanced)[:max_total]
 
 
 # ------------------------------------------------------------
@@ -577,6 +708,13 @@ She wants to know what is happening in the world every day, especially business,
 The email should be a world radar, not a heavy case-training task.
 Deep analysis will happen later in Irene's Notion consulting training workspace.
 
+Irene's current needs:
+- Restore sensitivity to what is happening in the outside world.
+- Build consulting-style commercial judgement.
+- Connect news signals to structured thinking, case interview logic, and Notion analysis.
+- Understand how macro, finance, consumer, TMT/AI, healthcare, energy/industrial, and consulting signals affect business decisions.
+- Avoid generic study suggestions; each item should include a short analytical reasoning process and a clear conclusion.
+
 Editorial positioning:
 - Main goal: help Irene know key developments and understand why they matter.
 - Use consulting-style industry groups rather than region-only sections.
@@ -592,8 +730,49 @@ Rules:
 2. Use only the articles provided. Do not invent facts.
 3. Prioritise significance over quantity.
 4. If a section has insufficient evidence, return an empty list for that section.
-5. Each item must explain why it matters.
-6. Output ONLY valid JSON. No Markdown. No code fences.
+4a. Never return placeholder objects with empty strings. If a section has no real content, return [].
+5. Every item must include:
+   - what_happened: what happened in plain language
+   - why_it_matters: why this matters for business, markets, economy, strategy, or industry structure
+   - daily_insight: a short analytical reasoning process plus a clear conclusion
+6. The daily_insight must NOT be a study suggestion. It must be an analytical result.
+7. The daily_insight must be written in an objective analytical voice. Do NOT use "Irene", "你", "我们", "should learn", "should understand", "should pay attention to", "需关注", "应理解", "练习", "增强" as the subject or main expression.
+8. The daily_insight should briefly explain the mechanism, not merely name the topic. It should show the chain:
+   trigger → transmission mechanism → strategic implication.
+9. A good daily_insight should usually contain 2 sentences:
+   Sentence 1: explain how the signal transmits through the economy / market / industry / company.
+   Sentence 2: state the strategic implication for companies, investors, consumers, or industry structure.
+10. Do NOT write generic advice such as "关注...", "练习...", "增强...", "可以用...框架分析", "Irene应理解...".
+11. You may mention a consulting framework only after giving the conclusion, not as the main content.
+12. Top 5 Strategic Signals and category sections may overlap. If a top signal belongs to a category, include it again in that category section.
+13. For each industry section, aim for 3-5 items when enough relevant source articles exist.
+14. Output ONLY valid JSON. No Markdown. No code fences.
+
+Daily Insight style guide:
+
+Bad daily_insight:
+"Irene应理解货币政策分歧如何传导至企业金融战略和市场定价。"
+
+Good daily_insight:
+"货币政策分歧会提高市场对未来利率路径的不确定性，进而影响债券收益率、企业融资成本和投资者风险偏好。对企业而言，这会压缩估值空间、推迟资本开支决策，并迫使 CFO 更谨慎地管理债务期限、现金流和再融资风险。"
+
+Bad daily_insight:
+"关注AI公司如何通过产品整合构筑竞争壁垒。"
+
+Good daily_insight:
+"OpenAI 聚焦产品与开发者工具生态整合，说明 AI 领先者正在从模型能力竞争转向平台入口、开发者生态和用户工作流竞争。未来竞争壁垒将更多来自高频场景嵌入、生态锁定和切换成本，而不只是单一模型性能。"
+
+Bad daily_insight:
+"关注跨国医药合作与联盟的盈利模式和风险分摊机制。"
+
+Good daily_insight:
+"大型药企通过跨国合作补充研发管线，说明制药行业正在把早期研发风险部分转移给外部创新公司，同时保留后期商业化和全球销售优势。对创新药企而言，价值不只来自单个产品，而来自能否进入全球药企的研发、审批和商业化网络。"
+
+Bad daily_insight:
+"理解新兴技术带来的间接能源成本压力。"
+
+Good daily_insight:
+"AI 需求先推高数据中心用电，再传导到电网投资和地方电价压力，说明 AI 竞争已经从模型能力延伸到能源获取与基础设施承载力。未来 AI 公司、数据中心运营商和地方政府之间的竞争会更像工业资源配置竞争。"
 
 Report date: {report_date}
 Generated time: {generated_time} Melbourne Time
@@ -608,6 +787,7 @@ Return JSON using exactly this schema:
       "region": "China / Australia / Global / US / Europe / Other",
       "what_happened": "what happened",
       "why_it_matters": "why it matters for business, markets, economy, or strategy",
+      "daily_insight": "a short analytical reasoning process plus a clear conclusion for this signal",
       "source_title": "article title",
       "source_url": "article link"
     }}
@@ -616,7 +796,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -625,7 +807,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -634,7 +818,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -643,7 +829,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -652,7 +840,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -661,7 +851,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -670,7 +862,9 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "",
-      "insight": "",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
       "source_title": "",
       "source_url": ""
     }}
@@ -764,12 +958,32 @@ def empty_line() -> str:
 
 
 def small_source(item: dict) -> str:
-    source_title = item.get("source_title") or item.get("title") or "Source"
-    source_url = item.get("source_url") or item.get("link") or ""
+    source_title = str(item.get("source_title") or item.get("title") or "").strip()
+    source_url = str(item.get("source_url") or item.get("link") or "").strip()
+
+    if not source_title and not source_url:
+        return ""
+
+    if source_title.lower() in ["source", "n/a", "none", "null"] and not source_url:
+        return ""
 
     return f"""
     <div style="font-size:12px; color:#6b7280; margin-top:10px;">
-      Source: {link_html(source_title, source_url)}
+      Source: {link_html(source_title or "Source", source_url)}
+    </div>
+    """
+
+
+def daily_insight_block(daily_insight: str, font_size: int = 13) -> str:
+    daily_insight = str(daily_insight or "").strip()
+
+    if not daily_insight:
+        return ""
+
+    return f"""
+    <div style="background:#f8fafc; border:1px solid #e5e7eb; border-radius:10px; padding:9px 11px; margin-top:8px;">
+      <div style="font-size:12px; color:#64748b; font-weight:800; margin-bottom:4px;">Daily Insight</div>
+      <div style="font-size:{font_size}px; line-height:1.7; color:#334155;">{esc(daily_insight)}</div>
     </div>
     """
 
@@ -787,29 +1001,52 @@ def strategic_signal_card(item: dict, index: int) -> str:
       <div style="font-size:17px; font-weight:800; color:#111827; margin-bottom:10px;">{esc(item.get("headline"))}</div>
       <div style="font-size:14px; line-height:1.7; color:#374151;"><strong>What happened:</strong> {esc(item.get("what_happened"))}</div>
       <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:6px;"><strong>Why it matters:</strong> {esc(item.get("why_it_matters"))}</div>
+      {daily_insight_block(item.get("daily_insight"), font_size=14)}
       {small_source(item)}
     </div>
     """
 
 
 def insight_item(item: dict) -> str:
+    what_happened = str(item.get("what_happened", "")).strip()
+    why_it_matters = str(item.get("why_it_matters", "")).strip()
+    fallback_insight = str(item.get("insight", "")).strip()
+
+    what_happened_html = ""
+    if what_happened:
+        what_happened_html = f"""
+        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:6px;">
+          <strong>What happened:</strong> {esc(what_happened)}
+        </div>
+        """
+
+    why_it_matters_html = ""
+    if why_it_matters:
+        why_it_matters_html = f"""
+        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:6px;">
+          <strong>Why it matters:</strong> {esc(why_it_matters)}
+        </div>
+        """
+
+    fallback_html = ""
+    if fallback_insight and not what_happened and not why_it_matters:
+        fallback_html = f"""
+        <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:4px;">
+          {esc(fallback_insight)}
+        </div>
+        """
+
     return f"""
-    <div style="border-left:4px solid #d1d5db; padding:10px 0 10px 14px; margin-bottom:12px;">
+    <div style="border-left:4px solid #d1d5db; padding:10px 0 10px 14px; margin-bottom:14px;">
       <div style="margin-bottom:6px;">{badge(item.get("region"))}</div>
       <div style="font-size:15px; font-weight:750; color:#111827;">{esc(item.get("headline"))}</div>
-      <div style="font-size:14px; line-height:1.7; color:#374151; margin-top:4px;">{esc(item.get("insight"))}</div>
+      {what_happened_html}
+      {why_it_matters_html}
+      {fallback_html}
+      {daily_insight_block(item.get("daily_insight"), font_size=13)}
       {small_source(item)}
     </div>
     """
-
-
-def render_list_section(title: str, items: list, subtitle: str = "") -> str:
-    html = section_title(title, subtitle)
-
-    if not items:
-        return html + empty_line()
-
-    return html + "".join(insight_item(item) for item in items[:4])
 
 
 def render_bullets(items: list[str]) -> str:
@@ -834,11 +1071,52 @@ def ensure_list(value) -> list:
     return []
 
 
+def is_meaningful_item(item: dict) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    meaningful_fields = [
+        "headline",
+        "what_happened",
+        "why_it_matters",
+        "insight",
+        "daily_insight",
+        "source_title",
+        "source_url",
+        "title",
+        "link",
+    ]
+
+    for field in meaningful_fields:
+        value = str(item.get(field, "")).strip()
+        if value and value.lower() not in ["source", "n/a", "none", "null"]:
+            return True
+
+    return False
+
+
+def clean_items(value, limit: int = 5) -> list[dict]:
+    items = ensure_list(value)
+    items = [item for item in items if is_meaningful_item(item)]
+    return items[:limit]
+
+
+def render_list_section(title: str, items: list, subtitle: str = "") -> str:
+    html = section_title(title, subtitle)
+
+    cleaned_items = clean_items(items, limit=5)
+
+    if not cleaned_items:
+        return html + empty_line()
+
+    return html + "".join(insight_item(item) for item in cleaned_items)
+
+
 def build_html_email(data: dict, article_count: int) -> str:
     report_date = get_report_date_string()
     generated_time = get_generated_time_string()
 
-    top_signals = ensure_list(data.get("top_5_strategic_signals"))[:5]
+    top_signals = clean_items(data.get("top_5_strategic_signals"), limit=5)
     top_signals_html = "".join(
         strategic_signal_card(item, idx)
         for idx, item in enumerate(top_signals, start=1)
@@ -882,19 +1160,19 @@ def build_html_email(data: dict, article_count: int) -> str:
       {section_title("Top 5 Strategic Signals", "跨宏观、金融、消费、科技、医疗、工业和咨询洞察的今日关键动向")}
       {top_signals_html}
 
-      {render_list_section("Macro & Policy Watch", ensure_list(data.get("macro_policy_watch")), "中国、澳洲与全球宏观经济、通胀、就业、利率、政策、贸易、地产与消费支出")}
+      {render_list_section("Macro & Policy Watch", data.get("macro_policy_watch"), "中国、澳洲与全球宏观经济、通胀、就业、利率、政策、贸易、地产与消费支出")}
 
-      {render_list_section("Financial Services & Markets", ensure_list(data.get("financial_services_markets")), "银行、资本市场、资产管理、保险、fintech、信贷、债券、股市与金融监管")}
+      {render_list_section("Financial Services & Markets", data.get("financial_services_markets"), "银行、资本市场、资产管理、保险、fintech、信贷、债券、股市与金融监管")}
 
-      {render_list_section("Consumer & Retail", ensure_list(data.get("consumer_retail")), "消费品、零售、电商、品牌、渠道、价格战、奢侈品、美妆、食品饮料与会员制零售")}
+      {render_list_section("Consumer & Retail", data.get("consumer_retail"), "消费品、零售、电商、品牌、渠道、价格战、奢侈品、美妆、食品饮料与会员制零售")}
 
-      {render_list_section("TMT & AI", ensure_list(data.get("tmt_ai")), "AI、云、芯片、平台、数据中心、通信、数字化转型与企业技术")}
+      {render_list_section("TMT & AI", data.get("tmt_ai"), "AI、云、芯片、平台、数据中心、通信、数字化转型与企业技术")}
 
-      {render_list_section("Healthcare & Life Sciences", ensure_list(data.get("healthcare_life_sciences")), "医药、医疗服务、生物科技、医保、健康消费与生命科学")}
+      {render_list_section("Healthcare & Life Sciences", data.get("healthcare_life_sciences"), "医药、医疗服务、生物科技、医保、健康消费与生命科学")}
 
-      {render_list_section("Energy, Industrials & Infrastructure", ensure_list(data.get("energy_industrials_infrastructure")), "能源、制造业、矿业、供应链、物流、基础设施、新能源与工业企业")}
+      {render_list_section("Energy, Industrials & Infrastructure", data.get("energy_industrials_infrastructure"), "能源、制造业、矿业、供应链、物流、基础设施、新能源与工业企业")}
 
-      {render_list_section("Consulting & Strategy Insights", ensure_list(data.get("consulting_strategy_insights")), "咨询公司观点、企业战略、组织转型、生产率、盈利能力与运营模式")}
+      {render_list_section("Consulting & Strategy Insights", data.get("consulting_strategy_insights"), "咨询公司观点、企业战略、组织转型、生产率、盈利能力与运营模式")}
 
       {section_title("Why This Matters", "今天这些信号放在一起，说明了什么？")}
       <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:16px; padding:16px;">
@@ -989,7 +1267,7 @@ def main() -> None:
     print(f"Generated: {generated_time} Melbourne Time")
 
     articles = fetch_articles(max_per_source=MAX_PER_SOURCE)
-    articles = articles[:MAX_ARTICLES_FOR_AI]
+    articles = balance_articles_by_category(articles, max_total=MAX_ARTICLES_FOR_AI)
 
     print(f"Sending {len(articles)} articles to OpenAI.")
 

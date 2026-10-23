@@ -1,1 +1,11 @@
-{}
+{
+  "成都地铁五期规划": {
+    "name": "成都地铁五期规划",
+    "stage": "planning",
+    "previous_stage": "",
+    "last_seen": "2026-10-23",
+    "source_title": "成都地铁五期首批开工4条线减至1条",
+    "source_url": "https://news.google.com/rss/articles/CBMia0FVX3lxTE5KcDllLTc5bmZ5bUwxM1M4YjZxQUdHS05ZTFRYWVFuVi1TX0h4RHlQNUhHb1Y1OUUtNVlveXFZOHdhbjVnaXpubjNJcG9BTzRWXzJEb20teVVTWnRSQ00yMENvX1J3SUJsd1pZ?oc=5",
+    "what_changed": "中新网报道，首批拟开工线路由四条减至一条；该信息描述计划变化，不代表其他线路已取消，也不代表首批线路已经开工。"
+  }
+}

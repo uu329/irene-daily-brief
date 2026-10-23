@@ -33,5 +33,5 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          OPENAI_MODEL: gpt-4.1-mini
+          OPENAI_MODEL: gpt-6-luna
         run: python daily_brief.py

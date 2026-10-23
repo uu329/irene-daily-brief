@@ -2,6 +2,8 @@ import os
 import re
 import json
 import smtplib
+from difflib import SequenceMatcher
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -46,7 +48,7 @@ MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 REPORT_LAG_DAYS = 1
 LOOKBACK_HOURS = 42
 MAX_PER_SOURCE = 25
-MAX_ARTICLES_FOR_AI = 75
+MAX_ARTICLES_FOR_AI = 95
 MIN_ARTICLES_FOR_DIGEST = 10
 REQUEST_TIMEOUT = 20
 
@@ -72,7 +74,7 @@ def get_report_date_string() -> str:
 # ------------------------------------------------------------
 def google_news_rss(query: str) -> str:
     encoded = quote_plus(query)
-    return f"https://news.google.com/rss/search?q={encoded}&hl=en-AU&gl=AU&ceid=AU:en"
+    return f"https://news.google.com/rss/search?q={encoded}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
 
 
 # ------------------------------------------------------------
@@ -193,6 +195,24 @@ SOURCES = {
 }
 
 
+# Regional discovery feeds: editorial emphasis, not a restriction on global coverage.
+REGIONAL_QUERIES = {
+    "China - Policy and Growth": ("中国 国务院 发改委 财政 经济 政策 消费 投资", "Macro & Policy"),
+    "China - Retail and Brands": ("中国 新消费 零售 美妆 奢侈品 购物中心 品牌 首店", "Consumer & Retail"),
+    "China - Commercial Property": ("中国 商业地产 购物中心 城市更新 商业综合体 招商", "Consumer & Retail"),
+    "Hong Kong - Finance Retail": ("香港 港股 IPO 零售 旅游 商业地产 金融", "Financial Services & Markets"),
+    "US - Economy and Business": ("United States Fed economy business retail earnings antitrust", "Macro & Policy"),
+    "EU - Economy and Business": ("European Union ECB industrial policy regulation consumer business", "Macro & Policy"),
+    "Australia - Retail and Property": ("Australia retail shopping centre commercial property RBA consumer", "Consumer & Retail"),
+    "Sichuan - Policy Industry": ("四川省 产业 项目 招商 政策 投资 统计", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Retail and Commercial Property": ("成都 商业地产 购物中心 首店 商圈 城市更新 非标商业", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Planned Projects": ("成都 拟建 规划公示 土地出让 商业项目 招商 在建 开业 延期", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Major Projects": ("四川 重大项目 立项 环评 开工 竣工 招商 产业园", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Transit and Housing": ("成都 地铁 建设 新站点 住宅 人口 TOD 城市规划", "Sichuan & Chengdu Regional Intelligence"),
+}
+for _label, (_query, _category) in REGIONAL_QUERIES.items():
+    SOURCES[_label] = google_news_rss(_query)
+
 SOURCE_CATEGORY_HINTS = {
     "China NBS Latest Releases": "Macro & Policy",
     "China Daily Bizchina": "Macro & Policy",
@@ -251,6 +271,8 @@ SOURCE_CATEGORY_HINTS = {
 }
 
 
+SOURCE_CATEGORY_HINTS.update({label: cat for label, (_, cat) in REGIONAL_QUERIES.items()})
+
 CATEGORY_ORDER = [
     "Macro & Policy",
     "Financial Services & Markets",
@@ -259,6 +281,7 @@ CATEGORY_ORDER = [
     "Healthcare & Life Sciences",
     "Energy, Industrials & Infrastructure",
     "Consulting & Strategy Insights",
+    "Sichuan & Chengdu Regional Intelligence",
 ]
 
 
@@ -269,7 +292,8 @@ CATEGORY_TARGETS = {
     "TMT & AI": 11,
     "Healthcare & Life Sciences": 8,
     "Energy, Industrials & Infrastructure": 12,
-    "Consulting & Strategy Insights": 10,
+    "Consulting & Strategy Insights": 9,
+    "Sichuan & Chengdu Regional Intelligence": 13,
 }
 
 
@@ -284,6 +308,7 @@ PRIORITY_KEYWORDS = [
     "trade", "exports", "imports", "china economy", "australia economy",
     "policy", "regulation", "budget", "stimulus",
     "中国经济", "社零", "居民消费", "通胀", "就业", "房地产", "政策",
+    "四川", "成都", "香港", "商圈", "购物中心", "城市更新", "拟建", "招商", "立项", "土地出让", "首店", "产业园",
 
     # Financial services
     "bank", "banking", "financial services", "capital markets",
@@ -417,16 +442,18 @@ def is_recent_article(article_dt: datetime | None) -> bool:
 
 def infer_region(article: dict) -> str:
     text = f'{article.get("source", "")} {article.get("title", "")} {article.get("summary", "")}'.lower()
-
-    if any(k in text for k in ["china", "chinese", "beijing", "shanghai", "中国"]):
+    if any(k in text for k in ("成都", "chengdu", "四川", "sichuan")):
+        return "Sichuan/Chengdu"
+    if any(k in text for k in ("香港", "hong kong", "hongkong", "hkex")):
+        return "Hong Kong"
+    if any(k in text for k in ("china", "chinese", "beijing", "shanghai", "中国", "北京", "上海")):
         return "China"
-    if any(k in text for k in ["australia", "australian", "rba", "sydney", "melbourne"]):
+    if any(k in text for k in ("australia", "australian", "rba", "sydney", "melbourne", "澳大利亚", "澳洲")):
         return "Australia"
-    if any(k in text for k in ["u.s.", "united states", "america", "fed", "wall street"]):
+    if any(k in text for k in ("u.s.", "united states", "america", "wall street", "美国")):
         return "US"
-    if any(k in text for k in ["europe", "european", "ecb", "uk ", "britain"]):
-        return "Europe"
-
+    if any(k in text for k in ("european union", "europe", "ecb", "eu commission", "欧盟", "欧洲")):
+        return "EU/Europe"
     return "Global"
 
 
@@ -471,13 +498,21 @@ def article_score(article: dict) -> int:
         score += 4
 
     if source_category == "Consumer & Retail":
-        score += 2
+        score += 6
+    if source_category == "Sichuan & Chengdu Regional Intelligence":
+        score += 14
+    region = article.get("region_hint", "")
+    score += {"China": 13, "Sichuan/Chengdu": 17, "Hong Kong": 9,
+              "US": 6, "Australia": 6, "EU/Europe": 6}.get(region, 0)
+    if any(term in text for term in ("购物中心", "commercial property", "shopping mall", "城市更新", "首店", "规划公示", "拟建")):
+        score += 10
 
     return score
 
 
 def deduplicate_articles(articles: list[dict]) -> list[dict]:
     seen = set()
+    seen_titles = []
     unique_articles = []
 
     for article in articles:
@@ -485,9 +520,13 @@ def deduplicate_articles(articles: list[dict]) -> list[dict]:
         title_key = article.get("title", "").strip().lower()
         key = link_key or title_key
 
+        title_compact = re.sub(r"[^\w\u4e00-\u9fff]+", "", title_key)
         if not key or key in seen:
             continue
-
+        if title_compact and any(SequenceMatcher(None, title_compact, old).ratio() >= 0.91 for old in seen_titles[-400:]):
+            continue
+        if title_compact:
+            seen_titles.append(title_compact)
         seen.add(key)
         unique_articles.append(article)
 
@@ -606,7 +645,23 @@ def balance_articles_by_category(articles: list[dict], max_total: int = MAX_ARTI
         space_left = max_total - len(balanced)
         balanced.extend(remaining[:space_left])
 
-    return deduplicate_articles(balanced)[:max_total]
+    # Regional coverage is an editorial floor where possible; global stories remain eligible.
+    regional_floors = {"China": 12, "Hong Kong": 4, "US": 5, "Australia": 4, "EU/Europe": 4}
+    chosen = deduplicate_articles(balanced)[:max_total]
+    regional_all = [a for a in articles if a.get("region_hint") != "Sichuan/Chengdu"]
+    def count_region(region):
+        return sum(a.get("region_hint") == region for a in chosen)
+    for region, floor in regional_floors.items():
+        extra = [a for a in regional_all if a.get("region_hint") == region and a not in chosen]
+        for item in extra[:max(0, floor - count_region(region))]:
+            replaceable = [i for i, a in enumerate(chosen)
+                           if a.get("region_hint") == "Global" and a.get("category_hint") != "Consulting & Strategy Insights"]
+            if replaceable:
+                chosen[replaceable[-1]] = item
+            elif len(chosen) < max_total:
+                chosen.append(item)
+    print("Regional candidate mix:", {r: count_region(r) for r in regional_floors})
+    return deduplicate_articles(chosen)[:max_total]
 
 
 # ------------------------------------------------------------
@@ -668,6 +723,7 @@ def default_digest_data(articles: list[dict], error_message: str | None = None) 
         "healthcare_life_sciences": [],
         "energy_industrials_infrastructure": [],
         "consulting_strategy_insights": [],
+        "sichuan_chengdu_intelligence": [],
         "why_this_matters": "今日可用信息不足，暂不提炼强趋势判断。",
         "notion_analysis_seed": {
             "signal": "今日无明确高信号事件",
@@ -719,7 +775,12 @@ Editorial positioning:
 - Main goal: help Irene know key developments and understand why they matter.
 - Use consulting-style industry groups rather than region-only sections.
 - Cover macro/policy, financial services, consumer/retail, TMT/AI, healthcare, energy/industrials, and consulting/strategy insights.
-- China and Australia economic movements are important and should appear under Macro & Policy when relevant.
+- Global coverage is ESSENTIAL. China is the primary editorial lens, NOT a geographic wall: never exclude a consequential worldwide event merely for its location.
+- Among general news, aim for roughly China mainland 40-50%, US 15-20%, Hong Kong 10-15%, Australia 10%, EU 10% if the candidate evidence supports it; never fill quotas with weak news.
+- Sichuan/Chengdu is a dedicated regional intelligence section IN ADDITION to the global coverage, not a replacement or quota deduction.
+- Prioritise Chinese consumption/retail/beauty/FMCG, commercial property, city renewal, macro and policy, while preserving global banking, TMT, healthcare and energy coverage.
+- Monitor Chengdu and Sichuan planned / approved / under-construction / leasing / opening / delayed projects, including metro, housing, commercial and industrial developments.
+- For overseas events, discuss Chinese business implications ONLY if a verifiable mechanism is evident; do not invent connections.
 - Financial services and markets should be a regular section.
 - Consumer & Retail should be included, but not dominate the entire brief.
 - AI/TMT should be treated as a business and strategy signal, not just tech gossip.
@@ -744,7 +805,12 @@ Rules:
    Sentence 2: state the strategic implication for companies, investors, consumers, or industry structure.
 10. Do NOT write generic advice such as "关注...", "练习...", "增强...", "可以用...框架分析", "Irene应理解...".
 11. You may mention a consulting framework only after giving the conclusion, not as the main content.
-12. Top 5 Strategic Signals and category sections may overlap. If a top signal belongs to a category, include it again in that category section.
+12. Avoid repeating the same narrative between Top 5 and industry sections: top headlines may reappear only when the industry entry contributes a DISTINCT, additional fact or perspective; otherwise exclude it from the category list.
+12a. A headline, number, or market-share claim must maintain the source's exact denominator, period, units and regulatory status. If source summary lacks them, remove the unsupported statistic instead of guessing.
+12b. Never infer that planned equals confirmed, construction started, or operational. State project stage and uncertainty explicitly.
+12c. Clearly distinguish reported facts, analytical inferences, and speculative implications. No forced causality; avoid generic AI claims unsupported by article text.
+12d. RSS feeds expose excerpts, not full article bodies: do not claim independent verification or fill in missing numerical details.
+12e. For region section, prioritize 2-4 truly consequential, distinct local events, and return [] when none. Planned projects matter even before construction, if the source contains a meaningful new status or milestone.
 13. For each industry section, aim for 3-5 items when enough relevant source articles exist.
 14. Output ONLY valid JSON. No Markdown. No code fences.
 
@@ -784,7 +850,7 @@ Return JSON using exactly this schema:
     {{
       "headline": "short headline",
       "category": "Macro & Policy / Financial Services & Markets / Consumer & Retail / TMT & AI / Healthcare & Life Sciences / Energy, Industrials & Infrastructure / Consulting & Strategy Insights",
-      "region": "China / Australia / Global / US / Europe / Other",
+      "region": "China / Hong Kong / US / Australia / EU/Europe / Sichuan/Chengdu / Global / Other",
       "what_happened": "what happened",
       "why_it_matters": "why it matters for business, markets, economy, or strategy",
       "daily_insight": "a short analytical reasoning process plus a clear conclusion for this signal",
@@ -869,6 +935,20 @@ Return JSON using exactly this schema:
       "source_url": ""
     }}
   ],
+  "sichuan_chengdu_intelligence": [
+    {{
+      "headline": "",
+      "region": "Sichuan/Chengdu",
+      "project_name": "specific project name if applicable, otherwise empty",
+      "project_stage": "planning / proposed / approved / under construction / leasing / opening / operational / delayed / cancelled / not applicable",
+      "what_changed": "documented NEW information or milestone, otherwise state as snapshot",
+      "what_happened": "",
+      "why_it_matters": "",
+      "daily_insight": "",
+      "source_title": "",
+      "source_url": ""
+    }}
+  ],
   "why_this_matters": "a short paragraph explaining what today's signals collectively suggest",
   "notion_analysis_seed": {{
     "signal": "the one signal most worth analysing later in Notion",
@@ -903,6 +983,8 @@ Articles:
 
     except Exception as error:
         print(f"OpenAI generation or JSON parsing failed: {error}")
+        if os.getenv("STRICT_AI", "1") == "1":
+            raise RuntimeError("OpenAI digest generation failed; not emailing a misleading fallback digest") from error
         return default_digest_data(articles, str(error))
 
 
@@ -1038,8 +1120,9 @@ def insight_item(item: dict) -> str:
 
     return f"""
     <div style="border-left:4px solid #d1d5db; padding:10px 0 10px 14px; margin-bottom:14px;">
-      <div style="margin-bottom:6px;">{badge(item.get("region"))}</div>
+      <div style="margin-bottom:6px;">{badge(item.get("region"))}{badge(item.get("project_stage"))}</div>
       <div style="font-size:15px; font-weight:750; color:#111827;">{esc(item.get("headline"))}</div>
+      {f'<div style="font-size:12px;color:#64748b;">Latest documented change: {esc(item.get("what_changed"))}</div>' if item.get("what_changed") else ''}
       {what_happened_html}
       {why_it_matters_html}
       {fallback_html}
@@ -1112,6 +1195,62 @@ def render_list_section(title: str, items: list, subtitle: str = "") -> str:
     return html + "".join(insight_item(item) for item in cleaned_items)
 
 
+PROJECT_PIPELINE_PATH = Path("data/chengdu_project_pipeline.json")
+
+
+def record_project_changes(data: dict, articles: list[dict]) -> None:
+    """Store sourced project milestones between GitHub runs. No inferred status changes."""
+    PROJECT_PIPELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        history = json.loads(PROJECT_PIPELINE_PATH.read_text(encoding="utf-8")) if PROJECT_PIPELINE_PATH.exists() else {}
+        if not isinstance(history, dict):
+            history = {}
+    except (ValueError, OSError):
+        history = {}
+
+    valid_links = {normalize_url(a.get("link", "")) for a in articles}
+    changes = []
+    for item in clean_items(data.get("sichuan_chengdu_intelligence", []), limit=8):
+        name = str(item.get("project_name") or "").strip()
+        stage = str(item.get("project_stage") or "").strip().lower()
+        url = str(item.get("source_url") or "").strip()
+        if not name or stage in ("", "not applicable", "n/a") or normalize_url(url) not in valid_links:
+            continue
+        key = re.sub(r"\s+", "", name).casefold()
+        past = history.get(key)
+        if not isinstance(past, dict):
+            past = None
+        if past and past.get("stage") == stage:
+            # An unchanged stage is not a new milestone; retain the last observation.
+            history[key]["last_seen"] = get_report_date_string()
+            continue
+        change_type = "首次记录" if past is None else f"{past.get('stage', '未知')} → {stage}"
+        record = {
+            "name": name, "stage": stage, "previous_stage": past.get("stage") if past else "",
+            "last_seen": get_report_date_string(), "source_title": item.get("source_title", ""),
+            "source_url": url, "what_changed": item.get("what_changed", ""),
+        }
+        history[key] = record
+        changes.append({**record, "change_type": change_type})
+    if changes or not PROJECT_PIPELINE_PATH.exists():
+        PROJECT_PIPELINE_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    data["project_pipeline_changes"] = changes[:8]
+    print(f"Project pipeline: {len(history)} tracked; {len(changes)} new or changed stages")
+
+
+def render_pipeline_section(changes: list) -> str:
+    if not changes:
+        return ""  # No false claims that project status changed today.
+    html = section_title("Chengdu Project Pipeline Changes", "与历史记录相比，项目阶段发生的变化；首次入库不等同于项目新启动")
+    for entry in changes:
+        name = esc(entry.get("name"))
+        change = esc(entry.get("change_type"))
+        summary = esc(entry.get("what_changed"))
+        source = link_html(entry.get("source_title"), entry.get("source_url"))
+        html += f'<div style="border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin:8px 0"><strong>{name}</strong> · {change}<div style="font-size:13px; margin-top:6px">{summary}</div><div style="font-size:12px; margin-top:6px">Source: {source}</div></div>'
+    return html
+
+
 def build_html_email(data: dict, article_count: int) -> str:
     report_date = get_report_date_string()
     generated_time = get_generated_time_string()
@@ -1173,6 +1312,9 @@ def build_html_email(data: dict, article_count: int) -> str:
       {render_list_section("Energy, Industrials & Infrastructure", data.get("energy_industrials_infrastructure"), "能源、制造业、矿业、供应链、物流、基础设施、新能源与工业企业")}
 
       {render_list_section("Consulting & Strategy Insights", data.get("consulting_strategy_insights"), "咨询公司观点、企业战略、组织转型、生产率、盈利能力与运营模式")}
+
+      {render_list_section("Sichuan & Chengdu Regional Intelligence", data.get("sichuan_chengdu_intelligence"), "四川产业与成都商业：规划、拟建、在建、招商、开业、延期及城市更新动态（仅展示有来源的有效信号）")}
+      {render_pipeline_section(data.get("project_pipeline_changes", []))}
 
       {section_title("Why This Matters", "今天这些信号放在一起，说明了什么？")}
       <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:16px; padding:16px;">
@@ -1272,6 +1414,7 @@ def main() -> None:
     print(f"Sending {len(articles)} articles to OpenAI.")
 
     digest_data = generate_digest_data(articles)
+    record_project_changes(digest_data, articles)
     digest_html = build_html_email(digest_data, article_count=len(articles))
 
     subject = f"Daily World Strategy Brief | {report_date}"

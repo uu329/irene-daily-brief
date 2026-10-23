@@ -204,16 +204,16 @@ REGIONAL_QUERIES = {
     "US - Economy and Business": ("United States Fed economy business retail earnings antitrust", "Macro & Policy"),
     "EU - Economy and Business": ("European Union ECB industrial policy regulation consumer business", "Macro & Policy"),
     "Australia - Retail and Property": ("Australia retail shopping centre commercial property RBA consumer", "Consumer & Retail"),
-    "Sichuan - Policy Industry": ("四川省 经济 政策 财政 投资 招商 产业 统计 就业", "Sichuan & Chengdu Regional Intelligence"),
-    "Sichuan - Consumption and Brands": ("四川 消费 零售 新消费 品牌 食品饮料 美妆 电商 文旅", "Sichuan & Chengdu Regional Intelligence"),
-    "Chengdu - Consumer Trends": ("成都 消费市场 商圈 餐饮 咖啡 茶饮 美妆 年轻消费者 消费数据", "Sichuan & Chengdu Regional Intelligence"),
-    "Chengdu - Brands and Retail": ("成都 品牌 首店 新店 入驻 连锁 零售 购物中心 本地品牌", "Sichuan & Chengdu Regional Intelligence"),
-    "Chengdu - Retail and Commercial Property": ("成都 商业地产 购物中心 首店 商圈 城市更新 非标商业", "Sichuan & Chengdu Regional Intelligence"),
-    "Chengdu - Planned Projects": ("成都 拟建 规划公示 土地出让 商业项目 招商 在建 开业 延期", "Sichuan & Chengdu Regional Intelligence"),
-    "Sichuan - Major Projects": ("四川 重大项目 立项 环评 开工 竣工 招商 产业园", "Sichuan & Chengdu Regional Intelligence"),
-    "Chengdu - Transit and Housing": ("成都 地铁 建设 新站点 住宅 人口 TOD 城市规划", "Sichuan & Chengdu Regional Intelligence"),
-    "Sichuan - Industry and Companies": ("四川 成都 企业 投融资 制造业 电子信息 汽车 生物医药 新能源 供应链", "Sichuan & Chengdu Regional Intelligence"),
-    "Chengdu - Tourism and Services": ("成都 四川 文旅 酒店 演出 会展 旅游 生活服务 夜间经济", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Policy Industry": ("四川 经济 政策", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Consumption and Brands": ("四川 消费 品牌", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Consumer Trends": ("成都 消费 零售", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Brands and Retail": ("成都 首店 品牌", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Retail and Commercial Property": ("成都 商圈 购物中心", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Planned Projects": ("成都 项目 规划 开工", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Major Projects": ("四川 重大项目 投资", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Transit and Housing": ("成都 地铁 商业", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Industry and Companies": ("四川 企业 产业", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Tourism and Services": ("成都 文旅 餐饮", "Sichuan & Chengdu Regional Intelligence"),
 }
 for _label, (_query, _category) in REGIONAL_QUERIES.items():
     SOURCES[_label] = google_news_rss(_query)
@@ -651,6 +651,32 @@ def balance_articles_by_category(articles: list[dict], max_total: int = MAX_ARTI
         space_left = max_total - len(balanced)
         balanced.extend(remaining[:space_left])
 
+    # Reserve regional evidence BEFORE allocating the remaining global slots.
+    # This guarantees that substantive Sichuan/Chengdu candidates reach the model,
+    # without requiring the model to publish news if no evidence exists.
+    regional_pool = sorted(
+        [a for a in articles if a.get("category_hint") == "Sichuan & Chengdu Regional Intelligence"],
+        key=article_score, reverse=True,
+    )
+    regional_keys = {normalize_url(a.get("link", "")) for a in balanced}
+    regional_selected = [a for a in balanced if a.get("category_hint") == "Sichuan & Chengdu Regional Intelligence"]
+    for candidate in regional_pool:
+        if len(regional_selected) >= 12:
+            break
+        k = normalize_url(candidate.get("link", ""))
+        if k in regional_keys:
+            continue
+        if len(balanced) >= max_total:
+            removable = next((i for i in range(len(balanced) - 1, -1, -1)
+                              if balanced[i].get("category_hint") != "Sichuan & Chengdu Regional Intelligence"), None)
+            if removable is None:
+                break
+            balanced.pop(removable)
+        balanced.append(candidate)
+        regional_keys.add(k)
+        regional_selected.append(candidate)
+    print(f"REGIONAL_DIAGNOSTIC candidates={len(regional_pool)} supplied={len(regional_selected)}")
+
     # Regional coverage is an editorial floor where possible; global stories remain eligible.
     regional_floors = {"China": 12, "Hong Kong": 4, "US": 5, "Australia": 4, "EU/Europe": 4}
     chosen = deduplicate_articles(balanced)[:max_total]
@@ -997,6 +1023,47 @@ Articles:
             raise RuntimeError("OpenAI digest generation failed; not emailing a misleading fallback digest") from error
         return default_digest_data(articles, str(error))
 
+
+
+def ensure_regional_intelligence(data: dict, articles: list[dict]) -> dict:
+    """Independently summarise regional evidence when global response omitted it."""
+    regional = [a for a in articles if a.get("category_hint") == "Sichuan & Chengdu Regional Intelligence"]
+    existing = data.get("sichuan_chengdu_intelligence") or []
+    print(f"REGIONAL_DIAGNOSTIC model_items={len(existing)} input_articles={len(regional)}")
+    if existing or not regional:
+        return data
+    prompt = f"""You are preparing the Sichuan & Chengdu section of a Chinese business intelligence digest.
+Use ONLY the following sourced RSS titles and excerpts. Select 1-4 materially relevant
+items across consumption, brands, retail, restaurants, services, tourism, economic policy,
+investment, industry, commercial real estate, and planned projects. Do not favor real estate.
+Do not invent figures, milestones, market shares, causes or project status. RSS summaries
+may be incomplete: qualify uncertainty. Source URL must be an exact URL in the supplied material.
+Return ONLY valid JSON of this shape:
+{{"items":[{{"headline":"", "region":"Sichuan/Chengdu", "project_name":"",
+"project_stage":"not applicable", "what_changed":"", "what_happened":"",
+"why_it_matters":"", "daily_insight":"", "source_title":"", "source_url":""}}]}}
+Never put generic commentary in what_happened. No evidence -> return empty list.
+
+Sourced items:
+{format_articles_for_prompt(regional[:15])}"""
+    try:
+        response = OpenAI().responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), input=prompt,
+        )
+        items = parse_json_from_model(response.output_text).get("items", [])
+        source_urls = {normalize_url(a["link"]) for a in regional}
+        if isinstance(items, list):
+            validated = [i for i in items if isinstance(i, dict)
+                         and normalize_url(str(i.get("source_url", ""))) in source_urls
+                         and str(i.get("headline", "")).strip()
+                         and str(i.get("what_happened", "")).strip()]
+            data["sichuan_chengdu_intelligence"] = validated[:4]
+            print(f"REGIONAL_DIAGNOSTIC recovery_items={len(validated[:4])}")
+    except Exception as exc:
+        print(f"REGIONAL_DIAGNOSTIC recovery_failed={type(exc).__name__}: {exc}")
+        if os.getenv("STRICT_AI", "1") == "1":
+            raise
+    return data
 
 # ------------------------------------------------------------
 # HTML rendering
@@ -1424,6 +1491,7 @@ def main() -> None:
     print(f"Sending {len(articles)} articles to OpenAI.")
 
     digest_data = generate_digest_data(articles)
+    digest_data = ensure_regional_intelligence(digest_data, articles)
     record_project_changes(digest_data, articles)
     digest_html = build_html_email(digest_data, article_count=len(articles))
 

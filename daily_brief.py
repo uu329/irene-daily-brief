@@ -204,11 +204,16 @@ REGIONAL_QUERIES = {
     "US - Economy and Business": ("United States Fed economy business retail earnings antitrust", "Macro & Policy"),
     "EU - Economy and Business": ("European Union ECB industrial policy regulation consumer business", "Macro & Policy"),
     "Australia - Retail and Property": ("Australia retail shopping centre commercial property RBA consumer", "Consumer & Retail"),
-    "Sichuan - Policy Industry": ("四川省 产业 项目 招商 政策 投资 统计", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Policy Industry": ("四川省 经济 政策 财政 投资 招商 产业 统计 就业", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Consumption and Brands": ("四川 消费 零售 新消费 品牌 食品饮料 美妆 电商 文旅", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Consumer Trends": ("成都 消费市场 商圈 餐饮 咖啡 茶饮 美妆 年轻消费者 消费数据", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Brands and Retail": ("成都 品牌 首店 新店 入驻 连锁 零售 购物中心 本地品牌", "Sichuan & Chengdu Regional Intelligence"),
     "Chengdu - Retail and Commercial Property": ("成都 商业地产 购物中心 首店 商圈 城市更新 非标商业", "Sichuan & Chengdu Regional Intelligence"),
     "Chengdu - Planned Projects": ("成都 拟建 规划公示 土地出让 商业项目 招商 在建 开业 延期", "Sichuan & Chengdu Regional Intelligence"),
     "Sichuan - Major Projects": ("四川 重大项目 立项 环评 开工 竣工 招商 产业园", "Sichuan & Chengdu Regional Intelligence"),
     "Chengdu - Transit and Housing": ("成都 地铁 建设 新站点 住宅 人口 TOD 城市规划", "Sichuan & Chengdu Regional Intelligence"),
+    "Sichuan - Industry and Companies": ("四川 成都 企业 投融资 制造业 电子信息 汽车 生物医药 新能源 供应链", "Sichuan & Chengdu Regional Intelligence"),
+    "Chengdu - Tourism and Services": ("成都 四川 文旅 酒店 演出 会展 旅游 生活服务 夜间经济", "Sichuan & Chengdu Regional Intelligence"),
 }
 for _label, (_query, _category) in REGIONAL_QUERIES.items():
     SOURCES[_label] = google_news_rss(_query)
@@ -309,6 +314,7 @@ PRIORITY_KEYWORDS = [
     "policy", "regulation", "budget", "stimulus",
     "中国经济", "社零", "居民消费", "通胀", "就业", "房地产", "政策",
     "四川", "成都", "香港", "商圈", "购物中心", "城市更新", "拟建", "招商", "立项", "土地出让", "首店", "产业园",
+    "消费市场", "新消费", "本地品牌", "品牌入驻", "新店", "连锁", "茶饮", "餐饮", "文旅", "会展", "服务业", "融资",
 
     # Financial services
     "bank", "banking", "financial services", "capital markets",
@@ -779,7 +785,11 @@ Editorial positioning:
 - Among general news, aim for roughly China mainland 40-50%, US 15-20%, Hong Kong 10-15%, Australia 10%, EU 10% if the candidate evidence supports it; never fill quotas with weak news.
 - Sichuan/Chengdu is a dedicated regional intelligence section IN ADDITION to the global coverage, not a replacement or quota deduction.
 - Prioritise Chinese consumption/retail/beauty/FMCG, commercial property, city renewal, macro and policy, while preserving global banking, TMT, healthcare and energy coverage.
-- Monitor Chengdu and Sichuan planned / approved / under-construction / leasing / opening / delayed projects, including metro, housing, commercial and industrial developments.
+- Sichuan/Chengdu intelligence is a BROAD regional economic and business radar, NOT primarily a real-estate or construction digest.
+- Treat the following regional beats as equally legitimate: (1) consumer demand, spending, retail sales and shopper behaviour; (2) local and incoming brands, first stores, product launches, beauty/FMCG, dining, coffee/tea, ecommerce and channel shifts; (3) shopping districts, commercial property, urban renewal and project pipeline; (4) tourism, hospitality, events and service economy; (5) Sichuan economic policy, investment, employment and business environment; (6) leading companies, startups, financing and industrial sectors; (7) Chengdu-Chongqing economic links and intra-Sichuan regional development.
+- Select regional stories based on economic and commercial significance, material change and credible evidence, NOT just construction milestones. Aim to cover consumption/brands/retail regularly when credible items exist; do not force a category if no verifiable news exists.
+- Monitor Chengdu and Sichuan planned / approved / under-construction / leasing / opening / delayed projects, including metro, housing, commercial and industrial developments, as ONE regional subtopic rather than the overriding focus.
+- For consumer/brand stories, explain demand drivers, customer segment, pricing, competition, channels and potential impact on local businesses where evidence allows. For projects, preserve development stage, uncertainty and changes versus earlier documented milestones.
 - For overseas events, discuss Chinese business implications ONLY if a verifiable mechanism is evident; do not invent connections.
 - Financial services and markets should be a regular section.
 - Consumer & Retail should be included, but not dominate the entire brief.
@@ -939,8 +949,8 @@ Return JSON using exactly this schema:
     {{
       "headline": "",
       "region": "Sichuan/Chengdu",
-      "project_name": "specific project name if applicable, otherwise empty",
-      "project_stage": "planning / proposed / approved / under construction / leasing / opening / operational / delayed / cancelled / not applicable",
+      "project_name": "only for an identifiable development project, otherwise empty",
+      "project_stage": "planning / proposed / approved / under construction / leasing / opening / operational / delayed / cancelled / not applicable; use not applicable for consumer, retail, brands, policy, and non-project news",
       "what_changed": "documented NEW information or milestone, otherwise state as snapshot",
       "what_happened": "",
       "why_it_matters": "",
@@ -1313,7 +1323,7 @@ def build_html_email(data: dict, article_count: int) -> str:
 
       {render_list_section("Consulting & Strategy Insights", data.get("consulting_strategy_insights"), "咨询公司观点、企业战略、组织转型、生产率、盈利能力与运营模式")}
 
-      {render_list_section("Sichuan & Chengdu Regional Intelligence", data.get("sichuan_chengdu_intelligence"), "四川产业与成都商业：规划、拟建、在建、招商、开业、延期及城市更新动态（仅展示有来源的有效信号）")}
+      {render_list_section("Sichuan & Chengdu Regional Intelligence", data.get("sichuan_chengdu_intelligence"), "四川与成都综合区域情报：消费、品牌、零售、餐饮、文旅、产业、政策、投资、商圈与商业项目动态")}
       {render_pipeline_section(data.get("project_pipeline_changes", []))}
 
       {section_title("Why This Matters", "今天这些信号放在一起，说明了什么？")}
